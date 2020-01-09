@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<challenges>
+
+  <ch999>
+    <path>C:\Users\und3ath\Desktop\src\ChallBroker\Debug\BrokerClientTest.exe</path>
+    <port>5050</port>
+    <user>ch99</user>
+    <pass>ch99</pass>
+  </ch999>
+
+
+  <ch888>
+    <path>C:\Users\und3ath\Desktop\src\ChallBroker\Debug\BrokerClientTest.exe</path>
+    <port>6060</port>
+    <user>ch88</user>
+    <pass>ch88</pass>
+  </ch888>
+  
+</challenges>
