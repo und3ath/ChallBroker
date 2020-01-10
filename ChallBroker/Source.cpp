@@ -13,6 +13,8 @@ using namespace tinyxml2;
 
 #include <list>
 #include <thread>
+#include <ctime>
+
 
 char g_listenIP[]= "127.0.0.1";
 
@@ -38,14 +40,44 @@ bool ReadConfig();
 void StartChallenge();
 void ChallengeBrokerThread(challenge_t* chall);
 bool DispatchClient(SOCKET client, challenge_t* chall);
-void DisplayError(LPWSTR pszAPI);
+void DisplayError(LPSTR pszAPI);
 bool EnableWindowsPrivileges(char* Privilege);
 
 
 int main(int argc, char** argv)
 {
 	int nStatus;
+	errno_t err;
 	WSADATA wsadata;
+	time_t rawtime = time(0);
+	struct tm timeinfo;
+	FILE* fErrStream;
+	FILE* fOperStream;
+
+	char szErrorLogFile[MAX_PATH] = { 0 };
+	char szOperLogFile[MAX_PATH] = { 0 };
+	char szTimeBuf[MAX_PATH] = { 0 };
+
+
+	// log files (redirect stderr and stdout to timestamped files)
+	
+	localtime_s(&timeinfo, &rawtime);
+	strftime(szTimeBuf, MAX_PATH, "%s%m%Y-%H%M%S", &timeinfo);	
+	sprintf_s(szErrorLogFile, MAX_PATH, "%s_%s%s", "error", szTimeBuf, ".log");
+	sprintf_s(szOperLogFile, MAX_PATH, "%s_%s%s", "operations", szTimeBuf, ".log");
+
+	err = freopen_s(&fErrStream, szErrorLogFile, "w", stderr);
+	if (err != 0) {
+		fprintf(stderr, "freopen_s() failed: %d\n", err);
+		exit(-1);
+	}
+
+	err = freopen_s(&fOperStream, szOperLogFile, "w", stdout);
+	if (err != 0) {
+		fprintf(stderr, "freopen_s() failed: %d\n", err);
+		exit(-1);
+	}
+
 
 
 	if (!EnableWindowsPrivileges((char*)SE_INCREASE_QUOTA_NAME)) {
@@ -104,29 +136,14 @@ bool EnableWindowsPrivileges(char* Privilege)
 
 
 
-void DisplayError(LPWSTR pszAPI)
+void DisplayError(LPSTR pszAPI)
 {
 	LPVOID lpvMessageBuffer;
-
-	FormatMessage(FORMAT_MESSAGE_ALLOCATE_BUFFER |
-		FORMAT_MESSAGE_FROM_SYSTEM,
-		NULL, GetLastError(),
-		MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
-		(LPSTR)&lpvMessageBuffer, 0, NULL);
-
-	//
-	//... now display this string
-	//
-	wprintf(L"ERROR: API        = %s.\n", pszAPI);
-	wprintf(L"       error code = %d.\n", GetLastError());
-	wprintf(L"       message    = %s.\n", (LPWSTR)lpvMessageBuffer);
-
-	//
-	// Free the buffer allocated by the system
-	//
+	FormatMessage(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM, NULL, GetLastError(), MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), (LPSTR)&lpvMessageBuffer, 0, NULL);
+	fprintf(stderr, "ERROR: API        = %s.\n", pszAPI);
+	fprintf(stderr, "       error code = %d.\n", GetLastError());
+	fprintf(stderr, "       message    = %s.\n", (LPSTR)lpvMessageBuffer);
 	LocalFree(lpvMessageBuffer);
-
-	ExitProcess(GetLastError());
 }
 
 
@@ -145,7 +162,7 @@ bool ReadConfig()
 		challenge_t *chall = NULL;
 		chall = (challenge_t*)malloc(sizeof(challenge_t));
 		if (chall == NULL) {
-			fprintf(stderr, "malloc failed\n");
+			fprintf(stderr, "malloc() failed\n");
 			return false;
 		}
 
@@ -220,26 +237,26 @@ void ChallengeBrokerThread(challenge_t* chall)
 	}
 
 	if (pAddr == NULL) {
-		fprintf(stderr, "unable to find suitable socket\n");
+		fprintf(stderr, "unable to find suitable socket.\n");
 		return;
 	}
 	
 	listensock = WSASocketW(pAddr->ai_family, pAddr->ai_socktype, pAddr->ai_protocol, NULL, 0, WSA_FLAG_OVERLAPPED);
 
 	if (listensock == INVALID_SOCKET) {
-		fprintf(stderr, "WSASocket failed. Error: %d\n", WSAGetLastError());
+		fprintf(stderr, "WSASocketW() failed. Error: %d\n", WSAGetLastError());
 		return;
 	}
 
 
 	if (bind(listensock, (struct sockaddr*)pAddr->ai_addr, pAddr->ai_addrlen) == SOCKET_ERROR) {
-		fprintf(stderr, "bind failed. Error: %d\n", WSAGetLastError());
+		fprintf(stderr, "bind() failed. Error: %d\n", WSAGetLastError());
 		return;
 	}
 
 
 	if (listen(listensock, 5) == SOCKET_ERROR) {
-		fprintf(stderr, "listen failed. Error: %d\n", WSAGetLastError());
+		fprintf(stderr, "listen() failed. Error: %d\n", WSAGetLastError());
 		return;
 	}
 
@@ -252,6 +269,8 @@ void ChallengeBrokerThread(challenge_t* chall)
 			fprintf(stderr, "WSAAccept failed. Error: %d\n", WSAGetLastError());
 			break;
 		}
+
+		
 
 		DispatchClient(acceptsock, chall);
 
@@ -283,18 +302,18 @@ bool DispatchClient(SOCKET client, challenge_t* chall) {
 
 
 	if ((ghParentFileMappingEvent = CreateEvent(NULL, TRUE, FALSE, szParentEventName)) == NULL) {
-		fprintf(stderr, "Create Event failed\n");
+		fprintf(stderr, "CreateEvent() failed: %d\n", GetLastError());
 		return false;
 	}
 
 	if ((ghChildFileMappingEvent = CreateEvent(NULL, TRUE, FALSE, szChildEventName)) == NULL) {
-		fprintf(stderr, "createevent failed\n");
+		fprintf(stderr, "CreateEvent() failed: %d\n", GetLastError());
 		CloseHandle(ghParentFileMappingEvent);
 		return false;
 	}
 
 
-
+	/*
 	size_t size; 
 	size_t outsize;
 	size = strlen(chall->user) + 1;
@@ -306,18 +325,18 @@ bool DispatchClient(SOCKET client, challenge_t* chall) {
 	size = strlen(szChildComandLineBuf) + 1;
 	wchar_t *cmdline = new wchar_t[size]();
 	mbstowcs_s(&outsize, cmdline, size, szChildComandLineBuf, size - 1);
-
+	*/
 	
 
 
 
 	PROCESS_INFORMATION pi = { 0 };
-	STARTUPINFOW si = { 0 };
-	si.cb = sizeof(STARTUPINFOW);
+	STARTUPINFO si = { 0 };
+	si.cb = sizeof(STARTUPINFO);
 	HANDLE htok;
 	if (!LogonUser(chall->user, ".", chall->pass, LOGON32_LOGON_INTERACTIVE, LOGON32_PROVIDER_DEFAULT, &htok))
 	{
-		fprintf(stderr, "logon user failed: %d\n", GetLastError());
+		fprintf(stderr, "LogonUser() failed: %d\n", GetLastError());
 		return false;
 
 	}
@@ -332,7 +351,7 @@ bool DispatchClient(SOCKET client, challenge_t* chall) {
 
 
 	//if(CreateProcessWithTokenW(htok, LOGON_WITH_PROFILE, NULL, cmdline, CREATE_UNICODE_ENVIRONMENT, NULL, NULL, &si, &pi))
-	if(CreateProcessAsUserW(htok, 0, cmdline, 0, 0, FALSE, DETACHED_PROCESS, 0, 0, &si, &pi))
+	if(CreateProcessAsUserA(htok, 0, szChildComandLineBuf, 0, 0, FALSE, DETACHED_PROCESS, 0, 0, &si, &pi))
 	//if (CreateProcessWithLogonW(username, NULL, password, LOGON_WITH_PROFILE, NULL, cmdline, CREATE_UNICODE_ENVIRONMENT, NULL, NULL, &si, &pi))
 	{
 		WSAPROTOCOL_INFOW protocoleInfo;
@@ -342,7 +361,7 @@ bool DispatchClient(SOCKET client, challenge_t* chall) {
 
 		if (WSADuplicateSocketW(client, pi.dwProcessId, &protocoleInfo) == SOCKET_ERROR)
 		{
-			fprintf(stderr, "wsaduplicatesocket failed\n");
+			fprintf(stderr, "WSADuplicateSocketW() failed: %d\n", WSAGetLastError());
 			return false;
 		}
 
@@ -352,7 +371,7 @@ bool DispatchClient(SOCKET client, challenge_t* chall) {
 		{
 			if ((nerror = GetLastError()) == ERROR_ALREADY_EXISTS)
 			{
-				fprintf(stderr, "createfilemapping failed: mapping already exists\n");
+				fprintf(stderr, "CreateFileMapping() failed: mapping already exists\n");
 				return false;
 			}
 			else
@@ -366,13 +385,13 @@ bool DispatchClient(SOCKET client, challenge_t* chall) {
 					SetEvent(ghParentFileMappingEvent);
 					if (WaitForSingleObject(ghChildFileMappingEvent, 2000) == WAIT_OBJECT_0)
 					{
-						fprintf(stderr, "waitforsingle object failed\n");
+						fprintf(stderr, "WaitForSingleObject() object failed: %d\n", GetLastError());
 						return false;
 					}
 				}
 				else
 				{
-					fprintf(stderr, "mapviewoffile failed\n");
+					fprintf(stderr, "MapViewOfFile() failed: %d\n", GetLastError());
 					
 				}
 			}
@@ -381,7 +400,7 @@ bool DispatchClient(SOCKET client, challenge_t* chall) {
 		}
 		else
 		{
-			fprintf(stderr, "CreateFileMapping failed\n");
+			fprintf(stderr, "CreateFileMapping() failed: %d\n", GetLastError());
 
 		}
 
@@ -391,7 +410,8 @@ bool DispatchClient(SOCKET client, challenge_t* chall) {
 	}
 	else
 	{
-		DisplayError((LPWSTR)L"CreateProcessWithLogonW");
+		//DisplayError((LPSTR)"CreateProcessWithLogonW");
+		fprintf(stderr, "CreateProcessWithLogonW() failed: %d", GetLastError());
 		return false;
 	}
 
