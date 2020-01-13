@@ -7,6 +7,9 @@
 #include <WSPiApi.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <io.h>
+#include <UserEnv.h>
+#include <aclapi.h>
 
 #include "tinyxml2.h"
 using namespace tinyxml2;
@@ -29,10 +32,10 @@ typedef struct challenge {
 
 
 // global vars
-XMLDocument g_xmlConf;
+tinyxml2::XMLDocument g_xmlConf;
 const char* g_xmlconfigfile = "challbroker.xml";
 std::list<challenge_t*> g_challenges;
-const char g_filemapbasename[] = "/MAPPED_FILE/WSADuplicateSocket";
+const char g_filemapbasename[] = "Global\\WSADuplicateSocket";
 int g_childCount;
 
 // methods def
@@ -42,6 +45,9 @@ void ChallengeBrokerThread(challenge_t* chall);
 bool DispatchClient(SOCKET client, challenge_t* chall);
 void DisplayError(LPSTR pszAPI);
 bool EnableWindowsPrivileges(char* Privilege);
+bool GetAccountSidFromUsername(char* username, PSID Sid, DWORD SidSize);
+bool CreateNullDacl(PSECURITY_ATTRIBUTES sa);
+
 
 
 int main(int argc, char** argv)
@@ -59,14 +65,15 @@ int main(int argc, char** argv)
 	char szTimeBuf[MAX_PATH] = { 0 };
 
 
-	// log files (redirect stderr and stdout to timestamped files)
-	
+	//log files (redirect stderr and stdout to timestamped files)
+	/*
 	localtime_s(&timeinfo, &rawtime);
-	strftime(szTimeBuf, MAX_PATH, "%s%m%Y-%H%M%S", &timeinfo);	
+	strftime(szTimeBuf, MAX_PATH, "%d%m%Y-%H%M%S", &timeinfo);	
 	sprintf_s(szErrorLogFile, MAX_PATH, "%s_%s%s", "error", szTimeBuf, ".log");
 	sprintf_s(szOperLogFile, MAX_PATH, "%s_%s%s", "operations", szTimeBuf, ".log");
-
+	
 	err = freopen_s(&fErrStream, szErrorLogFile, "w", stderr);
+	
 	if (err != 0) {
 		fprintf(stderr, "freopen_s() failed: %d\n", err);
 		exit(-1);
@@ -78,9 +85,8 @@ int main(int argc, char** argv)
 		exit(-1);
 	}
 
-
-
-	if (!EnableWindowsPrivileges((char*)SE_INCREASE_QUOTA_NAME)) {
+	*/
+	if (!EnableWindowsPrivileges((char*)SE_CREATE_GLOBAL_NAME)) {
 		fprintf(stderr, "Unable to adjuste privileges\n");
 		exit(-1);
 	}
@@ -104,6 +110,8 @@ int main(int argc, char** argv)
 	if (ReadConfig()) {
 		StartChallenge();
 	}
+
+	
 
 	return 0;
 }
@@ -283,6 +291,59 @@ void ChallengeBrokerThread(challenge_t* chall)
 
 
 
+bool GetAccountSidFromUsername(char* username, PSID Sid, DWORD SidSize)
+{
+	SID_NAME_USE snu;
+	DWORD cbSid = SidSize, cchRD = 0;
+	LPCSTR rd = NULL;
+	bool succ = LookupAccountName(NULL, username, Sid, &cbSid, (LPSTR)rd, &cchRD, &snu);
+	if (!succ)
+	{
+		if (GetLastError() != ERROR_INSUFFICIENT_BUFFER)
+			return false;
+
+		rd = (LPCSTR)LocalAlloc(LPTR, cchRD * sizeof(*rd));
+		if (!rd)
+		{
+			SetLastError(ERROR_OUTOFMEMORY);
+			return false;
+		}
+		cbSid = SidSize;
+		succ = LookupAccountName(NULL, username, Sid, &cbSid, (LPSTR)rd, &cchRD, &snu);
+	}
+	return succ;
+}
+
+
+
+
+bool CreateNullDacl(PSECURITY_ATTRIBUTES sa) {
+	PSECURITY_DESCRIPTOR pSD;
+	if (sa == NULL) {
+		return false;
+	}
+	pSD = (PSECURITY_ATTRIBUTES)LocalAlloc(LPTR, SECURITY_DESCRIPTOR_MIN_LENGTH);
+	if (pSD == NULL) {
+		fprintf(stderr, "LocalAlloc() failed: %d\n", GetLastError());
+		return false;
+	}
+
+	if (!InitializeSecurityDescriptor(pSD, SECURITY_DESCRIPTOR_REVISION)) {
+		return false;
+	}
+
+	if (!SetSecurityDescriptorDacl(pSD, TRUE, (PACL)NULL, FALSE)) {
+		return true;
+	}
+
+
+	sa->nLength = sizeof(SECURITY_ATTRIBUTES);
+	sa->lpSecurityDescriptor = pSD;
+	sa->bInheritHandle = TRUE;
+	return true;
+}
+
+
 
 // Dispath clients, logon user, and spawn subprocess. 
 bool DispatchClient(SOCKET client, challenge_t* chall) {
@@ -295,72 +356,129 @@ bool DispatchClient(SOCKET client, challenge_t* chall) {
 	HANDLE ghChildFileMappingEvent = NULL;
 	HANDLE ghMMFileMap = NULL;
 
+
+
+	/*byte sidbuf[SECURITY_MAX_SID_SIZE];
+	PSID challusersid = (PSID)sidbuf;
+	if (!GetAccountSidFromUsername(chall->user, challusersid, sizeof(sidbuf))) {
+		fprintf(stderr, "GetAccountSidFromUsername() failed: %d\n", GetLastError());
+		return false;
+	}*/
+	PSID pUsersSID = NULL;
+	PSID pAdminSID = NULL;
+	DWORD dwRes;
+	PACL pAcl = NULL;
+	SID_IDENTIFIER_AUTHORITY SIDAuthNT = SECURITY_NT_AUTHORITY;
+	if (!AllocateAndInitializeSid(&SIDAuthNT, 1, SECURITY_AUTHENTICATED_USER_RID,0, 0, 0, 0, 0, 0, 0, &pUsersSID)) {
+		fprintf(stderr, "AllocateAndInitializeSid() failed: %d\n", GetLastError());
+		return false;
+	}
+
+	if (!AllocateAndInitializeSid(&SIDAuthNT, 2, SECURITY_BUILTIN_DOMAIN_RID, DOMAIN_ALIAS_RID_ADMINS, 0, 0, 0, 0, 0, 0, &pAdminSID)) {
+		fprintf(stderr, "AllocateAndInitializeSid() failed: %d\n", GetLastError());
+		return false;
+	}
+
+	EXPLICIT_ACCESS ea[2];
+	SecureZeroMemory(&ea, 2 * sizeof(EXPLICIT_ACCESS));
+	ea[0].grfAccessPermissions = EVENT_ALL_ACCESS;
+	ea[0].grfAccessMode = SET_ACCESS;
+	ea[0].grfInheritance = NO_INHERITANCE;
+	ea[0].Trustee.TrusteeForm = TRUSTEE_IS_SID;
+	ea[0].Trustee.TrusteeType = TRUSTEE_IS_USER;
+	ea[0].Trustee.ptstrName = (LPTSTR)pUsersSID;
+
+
+	ea[1].grfAccessPermissions = EVENT_ALL_ACCESS;
+	ea[1].grfAccessMode = SET_ACCESS;
+	ea[1].grfInheritance = NO_INHERITANCE;
+	ea[1].Trustee.TrusteeForm = TRUSTEE_IS_SID;
+	ea[1].Trustee.TrusteeType = TRUSTEE_IS_GROUP;
+	ea[1].Trustee.ptstrName = (LPTSTR)pAdminSID;
+
+
+
+	dwRes = SetEntriesInAcl(2, ea, NULL, &pAcl);
+	if (dwRes != ERROR_SUCCESS) {
+		fprintf(stderr, "SetEntriesInAcl() failed: %d\n", GetLastError());
+		return false;
+	}
+
+	PSECURITY_DESCRIPTOR pSD = NULL;
+	pSD = (PSECURITY_DESCRIPTOR)LocalAlloc(LPTR, SECURITY_DESCRIPTOR_MIN_LENGTH);
+	if (pSD == NULL) {
+		fprintf(stderr, "LocalAlloc() failed: %d\n", GetLastError());
+		return false;
+	}
+
+	if (!InitializeSecurityDescriptor(pSD, SECURITY_DESCRIPTOR_REVISION)) {
+		fprintf(stderr, "InitializeSecurityDescriptor() failed: %d\n", GetLastError());
+		return false;
+	}
+
+
+	if (!SetSecurityDescriptorDacl(pSD, TRUE, pAcl, FALSE)) { 
+		fprintf(stderr, "SetSecurityDescriptorDacl() failed: %d\n", GetLastError());
+		return false;
+	}
+
+	SECURITY_ATTRIBUTES sa;
+	sa.nLength = sizeof(SECURITY_ATTRIBUTES);
+	sa.lpSecurityDescriptor = pSD;
+	sa.bInheritHandle = TRUE;
+
+
+
 	sprintf_s(szFileMappingObj, MAX_PATH, "%s%i", g_filemapbasename, g_childCount++);
 	sprintf_s(szParentEventName, MAX_PATH, "%s%s", szFileMappingObj, "parent");
 	sprintf_s(szChildEventName, MAX_PATH, "%s%s", szFileMappingObj, "child");
 	sprintf_s(szChildComandLineBuf, MAX_PATH, "%s %s", chall->path, szFileMappingObj);
 
 
-	if ((ghParentFileMappingEvent = CreateEvent(NULL, TRUE, FALSE, szParentEventName)) == NULL) {
+
+
+
+	if ((ghParentFileMappingEvent = CreateEvent(&sa, TRUE, FALSE, szParentEventName)) == NULL) {
 		fprintf(stderr, "CreateEvent() failed: %d\n", GetLastError());
 		return false;
 	}
 
-	if ((ghChildFileMappingEvent = CreateEvent(NULL, TRUE, FALSE, szChildEventName)) == NULL) {
+	if ((ghChildFileMappingEvent = CreateEvent(&sa, TRUE, FALSE, szChildEventName)) == NULL) {
 		fprintf(stderr, "CreateEvent() failed: %d\n", GetLastError());
 		CloseHandle(ghParentFileMappingEvent);
 		return false;
 	}
 
 
-	/*
-	size_t size; 
-	size_t outsize;
-	size = strlen(chall->user) + 1;
-	wchar_t* username = new wchar_t[size]();
-	mbstowcs_s(&outsize, username, size, chall->user, size - 1);
-	size = strlen(chall->pass) + 1;
-	wchar_t* password = new wchar_t[size]();
-	mbstowcs_s(&outsize, password, size, chall->pass, size - 1);
-	size = strlen(szChildComandLineBuf) + 1;
-	wchar_t *cmdline = new wchar_t[size]();
-	mbstowcs_s(&outsize, cmdline, size, szChildComandLineBuf, size - 1);
-	*/
-	
 
 
 
 	PROCESS_INFORMATION pi = { 0 };
 	STARTUPINFO si = { 0 };
-	si.cb = sizeof(STARTUPINFO);
+	SECURITY_ATTRIBUTES procSa;
+	CreateNullDacl(&procSa);
+
 	HANDLE htok;
-	if (!LogonUser(chall->user, ".", chall->pass, LOGON32_LOGON_INTERACTIVE, LOGON32_PROVIDER_DEFAULT, &htok))
-	{
+	if (!LogonUser(chall->user, ".", chall->pass, LOGON32_LOGON_BATCH, LOGON32_PROVIDER_DEFAULT, &htok)) {
 		fprintf(stderr, "LogonUser() failed: %d\n", GetLastError());
 		return false;
 
 	}
 
 
-	//if (!ImpersonateLoggedOnUser(htok))
-	//{
-	//	fprintf(stderr, "imperonation failed\n");
-	//	return false;
-	//}
 
 
 
-	//if(CreateProcessWithTokenW(htok, LOGON_WITH_PROFILE, NULL, cmdline, CREATE_UNICODE_ENVIRONMENT, NULL, NULL, &si, &pi))
-	if(CreateProcessAsUserA(htok, 0, szChildComandLineBuf, 0, 0, FALSE, DETACHED_PROCESS, 0, 0, &si, &pi))
-	//if (CreateProcessWithLogonW(username, NULL, password, LOGON_WITH_PROFILE, NULL, cmdline, CREATE_UNICODE_ENVIRONMENT, NULL, NULL, &si, &pi))
+	// todo the startup path
+	if(CreateProcessAsUser(htok, 0, szChildComandLineBuf, &procSa, 0, FALSE, NULL, NULL, "C:\\Users\\ch99", &si, &pi))
 	{
 		WSAPROTOCOL_INFOW protocoleInfo;
 		int nerror;
 		LPVOID lpView;
 		int nStructLen = sizeof(WSAPROTOCOL_INFOW);
 
-		if (WSADuplicateSocketW(client, pi.dwProcessId, &protocoleInfo) == SOCKET_ERROR)
-		{
+
+		if (WSADuplicateSocketW(client, pi.dwProcessId, &protocoleInfo) == SOCKET_ERROR) {
 			fprintf(stderr, "WSADuplicateSocketW() failed: %d\n", WSAGetLastError());
 			return false;
 		}
@@ -383,7 +501,7 @@ bool DispatchClient(SOCKET client, challenge_t* chall) {
 					UnmapViewOfFile(lpView);
 
 					SetEvent(ghParentFileMappingEvent);
-					if (WaitForSingleObject(ghChildFileMappingEvent, 2000) == WAIT_OBJECT_0)
+					if (WaitForSingleObject(ghChildFileMappingEvent, 20000) == WAIT_OBJECT_0)
 					{
 						fprintf(stderr, "WaitForSingleObject() object failed: %d\n", GetLastError());
 						return false;
@@ -410,10 +528,11 @@ bool DispatchClient(SOCKET client, challenge_t* chall) {
 	}
 	else
 	{
-		//DisplayError((LPSTR)"CreateProcessWithLogonW");
-		fprintf(stderr, "CreateProcessWithLogonW() failed: %d", GetLastError());
+		DisplayError((LPSTR)"CreateProcessWithLogonW");
+		//fprintf(stderr, "CreateProcessWithLogonW() failed: %d", GetLastError());
 		return false;
 	}
+
 
 
 	if (ghParentFileMappingEvent != NULL) {
