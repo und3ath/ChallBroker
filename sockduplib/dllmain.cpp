@@ -2,39 +2,42 @@
 #include "sockduplib.h"
 
 
-SOCKET GetSocket(char* szFileMapObj)
+SOCKET GetSocket(char* szFileMapObj, char* ParentEventHandle, char* ChildEventHandle)
 {
     WSAPROTOCOL_INFOW ProtocolInfo;
     SOCKET sockduplicated = INVALID_SOCKET;
-    char szParentEventName[MAX_PATH] = { 0 };
-    char szChildEventName[MAX_PATH] = { 0 };
+    //char szParentEventName[MAX_PATH] = { 0 };
+    //char szChildEventName[MAX_PATH] = { 0 };
     HANDLE ghParentFileMappingEvent = NULL;
     HANDLE ghChildFileMappingEvent = NULL;
     HANDLE ghMMFileMap = NULL;
 
-    FILE* fp;
-    int ret = fopen_s(&fp, "loggg.txt", "w");
 
-    sprintf_s(szParentEventName, MAX_PATH, "%s%s", szFileMapObj, "parent");
-    sprintf_s(szChildEventName, MAX_PATH, "%s%s", szFileMapObj, "child");
+    ghParentFileMappingEvent = (HANDLE)atoi(ParentEventHandle);
+    ghChildFileMappingEvent = (HANDLE)atoi(ChildEventHandle);
 
-    if ((ghParentFileMappingEvent = OpenEventA(SYNCHRONIZE, FALSE, szParentEventName)) == 0)
+
+
+    //sprintf_s(szParentEventName, MAX_PATH, "%s%s", szFileMapObj, "parent");
+    //sprintf_s(szChildEventName, MAX_PATH, "%s%s", szFileMapObj, "child");
+
+    /*if ((ghParentFileMappingEvent = OpenEventA(SYNCHRONIZE, FALSE, szParentEventName)) == 0)
     {
-        fprintf(fp, "OpenParentEvent failed");
+        fprintf(stderr, "OpenParentEvent failed");
         return INVALID_SOCKET;
     }
 
     if ((ghChildFileMappingEvent = OpenEventA(SYNCHRONIZE, FALSE, szChildEventName)) == 0) {
-        fprintf(fp, "OpenChildEvent failed\n");
+        fprintf(stderr, "OpenChildEvent failed\n");
         CloseHandle(ghParentFileMappingEvent);
         ghParentFileMappingEvent = NULL;
         return INVALID_SOCKET;
     }
-
+    */
 
     if (WaitForSingleObject(ghParentFileMappingEvent, 20000) == WAIT_FAILED)
     {
-        fprintf(fp, "Waitforsingleobject failed\n");
+        fprintf(stderr, "Waitforsingleobject failed\n");
         return INVALID_SOCKET;
     }
 
@@ -53,31 +56,21 @@ SOCKET GetSocket(char* szFileMapObj)
         }
         else
         {
-            fprintf(fp, "MapViewOfFile failed\n");
+            fprintf(stderr, "MapViewOfFile failed\n");
             return INVALID_SOCKET;
         }
     }
     else
     {
-        fprintf(fp, "CreateFileMapping failed\n");
+        fprintf(stderr, "CreateFileMapping failed\n");
         return INVALID_SOCKET;
-    }
-
-    if (ghChildFileMappingEvent != NULL) {
-        CloseHandle(ghChildFileMappingEvent);
-        ghChildFileMappingEvent = NULL;
-    }
-
-    if (ghParentFileMappingEvent != NULL) {
-        CloseHandle(ghParentFileMappingEvent);
-        ghParentFileMappingEvent = NULL;
     }
     
     if (ghMMFileMap != NULL) {
         CloseHandle(ghMMFileMap);
         ghMMFileMap = NULL;
     }
-    fclose(fp);
+
     return sockduplicated;
 }
 

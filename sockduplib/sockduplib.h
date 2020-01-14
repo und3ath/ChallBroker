@@ -9,4 +9,4 @@
 #endif
 
 
-LIBRARY_API SOCKET GetSocket(char* szFileMapObj);
+LIBRARY_API SOCKET GetSocket(char* szFileMapObj, char *ParentEventHandle, char * ChildEventHandle);

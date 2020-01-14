@@ -65,28 +65,13 @@ int main(int argc, char** argv)
 	char szTimeBuf[MAX_PATH] = { 0 };
 
 
-	//log files (redirect stderr and stdout to timestamped files)
-	/*
-	localtime_s(&timeinfo, &rawtime);
-	strftime(szTimeBuf, MAX_PATH, "%d%m%Y-%H%M%S", &timeinfo);	
-	sprintf_s(szErrorLogFile, MAX_PATH, "%s_%s%s", "error", szTimeBuf, ".log");
-	sprintf_s(szOperLogFile, MAX_PATH, "%s_%s%s", "operations", szTimeBuf, ".log");
-	
-	err = freopen_s(&fErrStream, szErrorLogFile, "w", stderr);
-	
-	if (err != 0) {
-		fprintf(stderr, "freopen_s() failed: %d\n", err);
-		exit(-1);
-	}
-
-	err = freopen_s(&fOperStream, szOperLogFile, "w", stdout);
-	if (err != 0) {
-		fprintf(stderr, "freopen_s() failed: %d\n", err);
-		exit(-1);
-	}
-
-	*/
 	if (!EnableWindowsPrivileges((char*)SE_CREATE_GLOBAL_NAME)) {
+		fprintf(stderr, "Unable to adjuste privileges\n");
+		exit(-1);
+	}
+
+
+	if (!EnableWindowsPrivileges((char*)SE_DEBUG_NAME)) {
 		fprintf(stderr, "Unable to adjuste privileges\n");
 		exit(-1);
 	}
@@ -364,12 +349,21 @@ bool DispatchClient(SOCKET client, challenge_t* chall) {
 		fprintf(stderr, "GetAccountSidFromUsername() failed: %d\n", GetLastError());
 		return false;
 	}*/
+
+
 	PSID pUsersSID = NULL;
 	PSID pAdminSID = NULL;
+	PSID pBatchSID = NULL;
 	DWORD dwRes;
-	PACL pAcl = NULL;
+	PACL pAclEvent = NULL;
+	PSECURITY_DESCRIPTOR pSDEvent = NULL;
+	EXPLICIT_ACCESS eaEvent[2];
+	SECURITY_ATTRIBUTES saEvent;
+	SID_IDENTIFIER_AUTHORITY SIDAuthWorld =	SECURITY_WORLD_SID_AUTHORITY;
 	SID_IDENTIFIER_AUTHORITY SIDAuthNT = SECURITY_NT_AUTHORITY;
-	if (!AllocateAndInitializeSid(&SIDAuthNT, 1, SECURITY_AUTHENTICATED_USER_RID,0, 0, 0, 0, 0, 0, 0, &pUsersSID)) {
+
+	// Allocate some specific SID
+	if (!AllocateAndInitializeSid(&SIDAuthWorld, 1, SECURITY_WORLD_RID, 0, 0, 0, 0, 0, 0, 0, &pUsersSID)) {
 		fprintf(stderr, "AllocateAndInitializeSid() failed: %d\n", GetLastError());
 		return false;
 	}
@@ -379,104 +373,158 @@ bool DispatchClient(SOCKET client, challenge_t* chall) {
 		return false;
 	}
 
-	EXPLICIT_ACCESS ea[2];
-	SecureZeroMemory(&ea, 2 * sizeof(EXPLICIT_ACCESS));
-	ea[0].grfAccessPermissions = EVENT_ALL_ACCESS;
-	ea[0].grfAccessMode = SET_ACCESS;
-	ea[0].grfInheritance = NO_INHERITANCE;
-	ea[0].Trustee.TrusteeForm = TRUSTEE_IS_SID;
-	ea[0].Trustee.TrusteeType = TRUSTEE_IS_USER;
-	ea[0].Trustee.ptstrName = (LPTSTR)pUsersSID;
+	if (!AllocateAndInitializeSid(&SIDAuthNT, 1, SECURITY_BATCH_RID, 0, 0, 0, 0, 0, 0, 0, &pBatchSID)) {
+		fprintf(stderr, "AllocateAndInitializeSid() failed: %d\n", GetLastError());
+		return false;
+	}
 
 
-	ea[1].grfAccessPermissions = EVENT_ALL_ACCESS;
-	ea[1].grfAccessMode = SET_ACCESS;
-	ea[1].grfInheritance = NO_INHERITANCE;
-	ea[1].Trustee.TrusteeForm = TRUSTEE_IS_SID;
-	ea[1].Trustee.TrusteeType = TRUSTEE_IS_GROUP;
-	ea[1].Trustee.ptstrName = (LPTSTR)pAdminSID;
+	// Setting DACL for child and parent event
+	// user have only synchronize event permission 
+	SecureZeroMemory(&eaEvent, 2 * sizeof(EXPLICIT_ACCESS));
+	eaEvent[0].grfAccessPermissions = SYNCHRONIZE;
+	eaEvent[0].grfAccessMode = SET_ACCESS;
+	eaEvent[0].grfInheritance = NO_INHERITANCE;
+	eaEvent[0].Trustee.TrusteeForm = TRUSTEE_IS_SID;
+	eaEvent[0].Trustee.TrusteeType = TRUSTEE_IS_WELL_KNOWN_GROUP;
+	eaEvent[0].Trustee.ptstrName = (LPTSTR)pUsersSID;
 
-
-
-	dwRes = SetEntriesInAcl(2, ea, NULL, &pAcl);
+	// admin have full acces to the events
+	eaEvent[1].grfAccessPermissions = SPECIFIC_RIGHTS_ALL | STANDARD_RIGHTS_ALL;
+	eaEvent[1].grfAccessMode = SET_ACCESS;
+	eaEvent[1].grfInheritance = NO_INHERITANCE;
+	eaEvent[1].Trustee.TrusteeForm = TRUSTEE_IS_SID;
+	eaEvent[1].Trustee.TrusteeType = TRUSTEE_IS_GROUP;
+	eaEvent[1].Trustee.ptstrName = (LPTSTR)pAdminSID;
+	
+	dwRes = SetEntriesInAcl(2, eaEvent, NULL, &pAclEvent);
 	if (dwRes != ERROR_SUCCESS) {
 		fprintf(stderr, "SetEntriesInAcl() failed: %d\n", GetLastError());
 		return false;
 	}
 
-	PSECURITY_DESCRIPTOR pSD = NULL;
-	pSD = (PSECURITY_DESCRIPTOR)LocalAlloc(LPTR, SECURITY_DESCRIPTOR_MIN_LENGTH);
-	if (pSD == NULL) {
+	pSDEvent = (PSECURITY_DESCRIPTOR)LocalAlloc(LPTR, SECURITY_DESCRIPTOR_MIN_LENGTH);
+	if (pSDEvent == NULL) {
 		fprintf(stderr, "LocalAlloc() failed: %d\n", GetLastError());
 		return false;
 	}
 
-	if (!InitializeSecurityDescriptor(pSD, SECURITY_DESCRIPTOR_REVISION)) {
+	if (!InitializeSecurityDescriptor(pSDEvent, SECURITY_DESCRIPTOR_REVISION)) {
 		fprintf(stderr, "InitializeSecurityDescriptor() failed: %d\n", GetLastError());
 		return false;
 	}
 
-
-	if (!SetSecurityDescriptorDacl(pSD, TRUE, pAcl, FALSE)) { 
+	if (!SetSecurityDescriptorDacl(pSDEvent, TRUE, (PACL)NULL, FALSE)) {
 		fprintf(stderr, "SetSecurityDescriptorDacl() failed: %d\n", GetLastError());
 		return false;
 	}
 
-	SECURITY_ATTRIBUTES sa;
-	sa.nLength = sizeof(SECURITY_ATTRIBUTES);
-	sa.lpSecurityDescriptor = pSD;
-	sa.bInheritHandle = TRUE;
+	
+	saEvent.nLength = sizeof(SECURITY_ATTRIBUTES);
+	saEvent.lpSecurityDescriptor = pSDEvent;
+	// Set the handle inheritable, can be used as is in the child proc
+	saEvent.bInheritHandle = TRUE;
 
-
-
+	
+	// build the events name string and child proc command line
 	sprintf_s(szFileMappingObj, MAX_PATH, "%s%i", g_filemapbasename, g_childCount++);
 	sprintf_s(szParentEventName, MAX_PATH, "%s%s", szFileMappingObj, "parent");
 	sprintf_s(szChildEventName, MAX_PATH, "%s%s", szFileMappingObj, "child");
-	sprintf_s(szChildComandLineBuf, MAX_PATH, "%s %s", chall->path, szFileMappingObj);
+	
 
 
-
-
-
-	if ((ghParentFileMappingEvent = CreateEvent(&sa, TRUE, FALSE, szParentEventName)) == NULL) {
+	// Create the parent and child event with appropriate DACL
+	if ((ghParentFileMappingEvent = CreateEvent(&saEvent, TRUE, FALSE, szParentEventName)) == NULL) {
 		fprintf(stderr, "CreateEvent() failed: %d\n", GetLastError());
 		return false;
 	}
 
-	if ((ghChildFileMappingEvent = CreateEvent(&sa, TRUE, FALSE, szChildEventName)) == NULL) {
+	if ((ghChildFileMappingEvent = CreateEvent(&saEvent, TRUE, FALSE, szChildEventName)) == NULL) {
 		fprintf(stderr, "CreateEvent() failed: %d\n", GetLastError());
 		CloseHandle(ghParentFileMappingEvent);
 		return false;
 	}
 
-
-
+	// build the cmd line
+	sprintf_s(szChildComandLineBuf, MAX_PATH, "%s %s %d %d", chall->path, szFileMappingObj, (int)ghParentFileMappingEvent, (int)ghChildFileMappingEvent);
 
 
 	PROCESS_INFORMATION pi = { 0 };
 	STARTUPINFO si = { 0 };
-	SECURITY_ATTRIBUTES procSa;
-	CreateNullDacl(&procSa);
+	
 
-	HANDLE htok;
-	if (!LogonUser(chall->user, ".", chall->pass, LOGON32_LOGON_BATCH, LOGON32_PROVIDER_DEFAULT, &htok)) {
+	HANDLE hUserToken;
+	// Logon the user and get his primary token
+	if (!LogonUser(chall->user, ".", chall->pass, LOGON32_LOGON_BATCH, LOGON32_PROVIDER_DEFAULT, &hUserToken)) {
 		fprintf(stderr, "LogonUser() failed: %d\n", GetLastError());
 		return false;
+	}
 
+	
+	// Create the DACL for the child process
+	SECURITY_ATTRIBUTES procSa;
+	EXPLICIT_ACCESS procEa[2];
+	PACL pProcAcl = NULL;
+	PSECURITY_DESCRIPTOR procSD = NULL;
+	SecureZeroMemory(&procEa, 2 * sizeof(EXPLICIT_ACCESS));
+	procEa[0].grfAccessPermissions = GENERIC_READ | GENERIC_EXECUTE;
+	procEa[0].grfAccessMode = SET_ACCESS;
+	procEa[0].grfInheritance = NO_INHERITANCE;
+	procEa[0].Trustee.TrusteeForm = TRUSTEE_IS_SID;
+	procEa[0].Trustee.TrusteeType = TRUSTEE_IS_WELL_KNOWN_GROUP;
+	procEa[0].Trustee.ptstrName = (LPTSTR)pUsersSID;
+
+	// Administrators have full control over the child process
+	procEa[1].grfAccessPermissions = PROCESS_ALL_ACCESS;
+	procEa[1].grfAccessMode = SET_ACCESS;
+	procEa[1].grfInheritance = NO_INHERITANCE;
+	procEa[1].Trustee.TrusteeForm = TRUSTEE_IS_SID;
+	procEa[1].Trustee.TrusteeType = TRUSTEE_IS_GROUP;
+	procEa[1].Trustee.ptstrName = (LPTSTR)pAdminSID;
+
+	dwRes = SetEntriesInAcl(2, procEa, NULL, &pProcAcl);
+	if (dwRes != ERROR_SUCCESS) {
+		fprintf(stderr, "SetEntriesInAcl() failed: %d\n", GetLastError());
+		return false;
+	}
+	
+	procSD = (PSECURITY_DESCRIPTOR)LocalAlloc(LPTR, SECURITY_DESCRIPTOR_MIN_LENGTH);
+	if (procSD == NULL) {
+		fprintf(stderr, "LocalAlloc() failed: %d\n", GetLastError());
+		return false;
+	}
+
+	if (!InitializeSecurityDescriptor(procSD, SECURITY_DESCRIPTOR_REVISION)) {
+		fprintf(stderr, "InitializeSecurityDescriptor() failed: %d\n", GetLastError());
+		return false;
+	}
+
+	if (!SetSecurityDescriptorDacl(procSD, TRUE, (PACL)NULL, FALSE)) {
+		fprintf(stderr, "SetSecurityDescriptorDacl() failed: %d\n", GetLastError());
+		return false;
+	}
+
+	procSa.nLength = sizeof(SECURITY_ATTRIBUTES);
+	procSa.lpSecurityDescriptor = procSD;
+	procSa.bInheritHandle = TRUE;
+
+
+	// Creat an environment block for the child process
+	LPVOID env = NULL;
+	if (!CreateEnvironmentBlock(&env, hUserToken, TRUE)) {
+		fprintf(stderr, "CreateEnvironmentBlock() failed: %d\n", GetLastError());
+		return false;
 	}
 
 
-
-
-
+	// Start the child process 
 	// todo the startup path
-	if(CreateProcessAsUser(htok, 0, szChildComandLineBuf, &procSa, 0, FALSE, NULL, NULL, "C:\\Users\\ch99", &si, &pi))
+	if(CreateProcessAsUser(hUserToken, 0, szChildComandLineBuf, &procSa, 0, TRUE, NULL, NULL, "C:\\Users\\ch99", &si, &pi))
 	{
 		WSAPROTOCOL_INFOW protocoleInfo;
 		int nerror;
 		LPVOID lpView;
 		int nStructLen = sizeof(WSAPROTOCOL_INFOW);
-
 
 		if (WSADuplicateSocketW(client, pi.dwProcessId, &protocoleInfo) == SOCKET_ERROR) {
 			fprintf(stderr, "WSADuplicateSocketW() failed: %d\n", WSAGetLastError());
@@ -484,7 +532,58 @@ bool DispatchClient(SOCKET client, challenge_t* chall) {
 		}
 
 
-		ghMMFileMap = CreateFileMapping(INVALID_HANDLE_VALUE, NULL, PAGE_READWRITE, 0, nStructLen, szFileMappingObj);
+		// Create DACL for the file mapped object
+		SECURITY_ATTRIBUTES mapSa;
+		EXPLICIT_ACCESS mapEa[2];
+		PACL pmapAcl = NULL;
+		PSECURITY_DESCRIPTOR mapSD = NULL;
+		SecureZeroMemory(&mapEa, 2 * sizeof(EXPLICIT_ACCESS));
+		mapEa[0].grfAccessPermissions = FILE_GENERIC_READ;
+		mapEa[0].grfAccessMode = SET_ACCESS;
+		mapEa[0].grfInheritance = NO_INHERITANCE;
+		mapEa[0].Trustee.TrusteeForm = TRUSTEE_IS_SID;
+		mapEa[0].Trustee.TrusteeType = TRUSTEE_IS_WELL_KNOWN_GROUP;
+		mapEa[0].Trustee.ptstrName = (LPTSTR)pUsersSID;
+
+		// Administrators have full control over the mapped file
+		mapEa[1].grfAccessPermissions = FILE_ALL_ACCESS;
+		mapEa[1].grfAccessMode = SET_ACCESS;
+		mapEa[1].grfInheritance = NO_INHERITANCE;
+		mapEa[1].Trustee.TrusteeForm = TRUSTEE_IS_SID;
+		mapEa[1].Trustee.TrusteeType = TRUSTEE_IS_GROUP;
+		mapEa[1].Trustee.ptstrName = (LPTSTR)pAdminSID;
+
+
+		dwRes = SetEntriesInAcl(2, mapEa, NULL, &pmapAcl);
+		if (dwRes != ERROR_SUCCESS) {
+			fprintf(stderr, "SetEntriesInAcl() failed: %d\n", GetLastError());
+			return false;
+		}
+
+		mapSD = (PSECURITY_DESCRIPTOR)LocalAlloc(LPTR, SECURITY_DESCRIPTOR_MIN_LENGTH);
+		if (mapSD == NULL) {
+			fprintf(stderr, "LocalAlloc() failed: %d\n", GetLastError());
+			return false;
+		}
+
+		if (!InitializeSecurityDescriptor(mapSD, SECURITY_DESCRIPTOR_REVISION)) {
+			fprintf(stderr, "InitializeSecurityDescriptor() failed: %d\n", GetLastError());
+			return false;
+		}
+
+		if (!SetSecurityDescriptorDacl(mapSD, TRUE, (PACL)NULL, FALSE)) {
+			fprintf(stderr, "SetSecurityDescriptorDacl() failed: %d\n", GetLastError());
+			return false;
+		}
+
+		mapSa.nLength = sizeof(SECURITY_ATTRIBUTES);
+		mapSa.lpSecurityDescriptor = mapSD;
+		mapSa.bInheritHandle = TRUE;
+
+
+
+
+		ghMMFileMap = CreateFileMapping(INVALID_HANDLE_VALUE, &mapSa, PAGE_READWRITE, 0, nStructLen, szFileMappingObj);
 		if (ghMMFileMap != NULL)
 		{
 			if ((nerror = GetLastError()) == ERROR_ALREADY_EXISTS)
@@ -516,8 +615,7 @@ bool DispatchClient(SOCKET client, challenge_t* chall) {
 			CloseHandle(ghMMFileMap);
 			ghMMFileMap = NULL;
 		}
-		else
-		{
+		else {
 			fprintf(stderr, "CreateFileMapping() failed: %d\n", GetLastError());
 
 		}
@@ -529,7 +627,6 @@ bool DispatchClient(SOCKET client, challenge_t* chall) {
 	else
 	{
 		DisplayError((LPSTR)"CreateProcessWithLogonW");
-		//fprintf(stderr, "CreateProcessWithLogonW() failed: %d", GetLastError());
 		return false;
 	}
 

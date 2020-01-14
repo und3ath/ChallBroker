@@ -1,46 +1,49 @@
 #include <iostream>
 #include <WinSock2.h>
 
-// #include "../sockduplib/sockduplib.h"
+
 
 FILE* fp;
 
+// #include "../sockduplib/sockduplib.h"
+SOCKET GetSocket(char* szFileMapObj, char* ParentEventHandle, char* ChildEventHandle);
 
-SOCKET GetSocket(char* szFileMapObj);
-
-SOCKET GetSocket(char* szFileMapObj)
+SOCKET GetSocket(char* szFileMapObj, char* ParentEventHandle, char* ChildEventHandle)
 {
     WSAPROTOCOL_INFOW ProtocolInfo;
     SOCKET sockduplicated = INVALID_SOCKET;
-    char szParentEventName[MAX_PATH] = { 0 };
-    char szChildEventName[MAX_PATH] = { 0 };
+    //char szParentEventName[MAX_PATH] = { 0 };
+    //char szChildEventName[MAX_PATH] = { 0 };
     HANDLE ghParentFileMappingEvent = NULL;
     HANDLE ghChildFileMappingEvent = NULL;
     HANDLE ghMMFileMap = NULL;
 
-    
 
-    sprintf_s(szParentEventName, MAX_PATH, "%s%s", szFileMapObj, "parent");
-    sprintf_s(szChildEventName, MAX_PATH, "%s%s", szFileMapObj, "child");
+    ghParentFileMappingEvent = (HANDLE)atoi(ParentEventHandle);
+    ghChildFileMappingEvent = (HANDLE)atoi(ChildEventHandle);
 
-    //if ((ghParentFileMappingEvent = OpenEventA(SYNCHRONIZE, FALSE, szParentEventName)) == 0)
-    if ((ghParentFileMappingEvent = CreateEventExA(NULL, szParentEventName, 0, SYNCHRONIZE)) == 0)
+    fprintf(fp, "parent: %d\n", ghParentFileMappingEvent);
+    fprintf(fp, "child: %d\n", ghChildFileMappingEvent);
+
+    //sprintf_s(szParentEventName, MAX_PATH, "%s%s", szFileMapObj, "parent");
+    //sprintf_s(szChildEventName, MAX_PATH, "%s%s", szFileMapObj, "child");
+
+    /*if ((ghParentFileMappingEvent = OpenEventA(SYNCHRONIZE, FALSE, szParentEventName)) == 0)
     {
-        fprintf(fp, "OpenParentEvent failed: %d\n", GetLastError());
+        fprintf(stderr, "OpenParentEvent failed");
         return INVALID_SOCKET;
     }
 
     if ((ghChildFileMappingEvent = OpenEventA(SYNCHRONIZE, FALSE, szChildEventName)) == 0) {
-        fprintf(fp, "OpenChildEvent failed: %d\n", GetLastError());
+        fprintf(stderr, "OpenChildEvent failed\n");
         CloseHandle(ghParentFileMappingEvent);
         ghParentFileMappingEvent = NULL;
         return INVALID_SOCKET;
     }
+    */
 
-
-    if (WaitForSingleObject(ghParentFileMappingEvent, 20000) == WAIT_FAILED)
-    {
-        fprintf(fp, "Waitforsingleobject failed\n");
+    if (WaitForSingleObject(ghParentFileMappingEvent, 20000) == WAIT_FAILED) {
+        fprintf(fp, "Waitforsingleobject failed: %d\n", GetLastError());
         return INVALID_SOCKET;
     }
 
@@ -59,33 +62,25 @@ SOCKET GetSocket(char* szFileMapObj)
         }
         else
         {
-            fprintf(fp, "MapViewOfFile failed\n");
+            fprintf(fp, "MapViewOfFile failed: %d\n", GetLastError());
             return INVALID_SOCKET;
         }
     }
     else
     {
-        fprintf(fp, "CreateFileMapping failed\n");
+        fprintf(fp, "CreateFileMapping failed: %d\n", GetLastError());
         return INVALID_SOCKET;
-    }
-
-    if (ghChildFileMappingEvent != NULL) {
-        CloseHandle(ghChildFileMappingEvent);
-        ghChildFileMappingEvent = NULL;
-    }
-
-    if (ghParentFileMappingEvent != NULL) {
-        CloseHandle(ghParentFileMappingEvent);
-        ghParentFileMappingEvent = NULL;
     }
 
     if (ghMMFileMap != NULL) {
         CloseHandle(ghMMFileMap);
         ghMMFileMap = NULL;
     }
-    //fclose(fp);
+
     return sockduplicated;
 }
+
+
 
 
 
@@ -97,22 +92,27 @@ int main(int argc, char** argv)
     DWORD dwReceived = 0;
     DWORD dwFlags = 0;
     int nStatus;
-
+    WSADATA wsadata;
     SOCKET sock = INVALID_SOCKET;
     int res = fopen_s(&fp, "client.log", "w");
-    sock = GetSocket(argv[1]);
 
-    
+    if (argc < 3) {
+        fprintf(stderr, "to few arguments : program filemaping handle handle");
+        return -1;
+    }
 
-
-
-    if (sock == INVALID_SOCKET)
-    {
-        fprintf(fp, "Unable to get socket ... %s\n", argv[1]);
+    if ((nStatus = WSAStartup(0x202, &wsadata)) != 0) {
+        fprintf(stderr, "Winsock2 Initialisation failed: %d\n", nStatus);
+        WSACleanup();
         exit(-1);
     }
 
-    char buff[10] = "salut\n";
+    // Use the library to get the socket
+    sock = GetSocket(argv[1], argv[2], argv[3]);
+    if (sock == INVALID_SOCKET) {
+        fprintf(fp, "Unable to get socket ... %s\n", argv[1]);
+        exit(-1);
+    }
 
     while (TRUE)
     {
