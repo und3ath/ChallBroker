@@ -445,8 +445,65 @@ bool DispatchClient(SOCKET client, challenge_t* chall) {
 		return false;
 	}
 
+
+
+
+
+	// DACL for the file mapping object
+	SECURITY_ATTRIBUTES mapSa;
+	EXPLICIT_ACCESS mapEa[2];
+	PACL pmapAcl = NULL;
+	PSECURITY_DESCRIPTOR mapSD = NULL;
+	SecureZeroMemory(&mapEa, 2 * sizeof(EXPLICIT_ACCESS));
+	mapEa[0].grfAccessPermissions = FILE_GENERIC_READ;
+	mapEa[0].grfAccessMode = SET_ACCESS;
+	mapEa[0].grfInheritance = NO_INHERITANCE;
+	mapEa[0].Trustee.TrusteeForm = TRUSTEE_IS_SID;
+	mapEa[0].Trustee.TrusteeType = TRUSTEE_IS_WELL_KNOWN_GROUP;
+	mapEa[0].Trustee.ptstrName = (LPTSTR)pUsersSID;
+
+	// Administrators have full control over the mapped file
+	mapEa[1].grfAccessPermissions = FILE_ALL_ACCESS;
+	mapEa[1].grfAccessMode = SET_ACCESS;
+	mapEa[1].grfInheritance = NO_INHERITANCE;
+	mapEa[1].Trustee.TrusteeForm = TRUSTEE_IS_SID;
+	mapEa[1].Trustee.TrusteeType = TRUSTEE_IS_GROUP;
+	mapEa[1].Trustee.ptstrName = (LPTSTR)pAdminSID;
+
+
+	dwRes = SetEntriesInAcl(2, mapEa, NULL, &pmapAcl);
+	if (dwRes != ERROR_SUCCESS) {
+		fprintf(stderr, "SetEntriesInAcl() failed: %d\n", GetLastError());
+		return false;
+	}
+
+	mapSD = (PSECURITY_DESCRIPTOR)LocalAlloc(LPTR, SECURITY_DESCRIPTOR_MIN_LENGTH);
+	if (mapSD == NULL) {
+		fprintf(stderr, "LocalAlloc() failed: %d\n", GetLastError());
+		return false;
+	}
+
+	if (!InitializeSecurityDescriptor(mapSD, SECURITY_DESCRIPTOR_REVISION)) {
+		fprintf(stderr, "InitializeSecurityDescriptor() failed: %d\n", GetLastError());
+		return false;
+	}
+
+	if (!SetSecurityDescriptorDacl(mapSD, TRUE, (PACL)NULL, FALSE)) {
+		fprintf(stderr, "SetSecurityDescriptorDacl() failed: %d\n", GetLastError());
+		return false;
+	}
+
+	mapSa.nLength = sizeof(SECURITY_ATTRIBUTES);
+	mapSa.lpSecurityDescriptor = mapSD;
+	mapSa.bInheritHandle = TRUE;   // set the flag to inherit handle in child processs 
+
+	ghMMFileMap = CreateFileMapping(INVALID_HANDLE_VALUE, &mapSa, PAGE_READWRITE, 0, sizeof(WSAPROTOCOL_INFOW), szFileMappingObj);
+
+
+
+
 	// build the cmd line
-	sprintf_s(szChildComandLineBuf, MAX_PATH, "%s %s %d %d", chall->path, szFileMappingObj, (int)ghParentFileMappingEvent, (int)ghChildFileMappingEvent);
+	sprintf_s(szChildComandLineBuf, MAX_PATH, "%s %d %d %d", chall->path, (int)ghParentFileMappingEvent, (int)ghChildFileMappingEvent, (int)ghMMFileMap);
 
 
 	PROCESS_INFORMATION pi = { 0 };
@@ -517,6 +574,11 @@ bool DispatchClient(SOCKET client, challenge_t* chall) {
 	}
 
 
+
+
+
+
+
 	// Start the child process 
 	// todo the startup path
 	if(CreateProcessAsUser(hUserToken, 0, szChildComandLineBuf, &procSa, 0, TRUE, NULL, NULL, "C:\\Users\\ch99", &si, &pi))
@@ -524,101 +586,34 @@ bool DispatchClient(SOCKET client, challenge_t* chall) {
 		WSAPROTOCOL_INFOW protocoleInfo;
 		int nerror;
 		LPVOID lpView;
-		int nStructLen = sizeof(WSAPROTOCOL_INFOW);
+
 
 		if (WSADuplicateSocketW(client, pi.dwProcessId, &protocoleInfo) == SOCKET_ERROR) {
 			fprintf(stderr, "WSADuplicateSocketW() failed: %d\n", WSAGetLastError());
 			return false;
 		}
 
-
-		// Create DACL for the file mapped object
-		SECURITY_ATTRIBUTES mapSa;
-		EXPLICIT_ACCESS mapEa[2];
-		PACL pmapAcl = NULL;
-		PSECURITY_DESCRIPTOR mapSD = NULL;
-		SecureZeroMemory(&mapEa, 2 * sizeof(EXPLICIT_ACCESS));
-		mapEa[0].grfAccessPermissions = FILE_GENERIC_READ;
-		mapEa[0].grfAccessMode = SET_ACCESS;
-		mapEa[0].grfInheritance = NO_INHERITANCE;
-		mapEa[0].Trustee.TrusteeForm = TRUSTEE_IS_SID;
-		mapEa[0].Trustee.TrusteeType = TRUSTEE_IS_WELL_KNOWN_GROUP;
-		mapEa[0].Trustee.ptstrName = (LPTSTR)pUsersSID;
-
-		// Administrators have full control over the mapped file
-		mapEa[1].grfAccessPermissions = FILE_ALL_ACCESS;
-		mapEa[1].grfAccessMode = SET_ACCESS;
-		mapEa[1].grfInheritance = NO_INHERITANCE;
-		mapEa[1].Trustee.TrusteeForm = TRUSTEE_IS_SID;
-		mapEa[1].Trustee.TrusteeType = TRUSTEE_IS_GROUP;
-		mapEa[1].Trustee.ptstrName = (LPTSTR)pAdminSID;
-
-
-		dwRes = SetEntriesInAcl(2, mapEa, NULL, &pmapAcl);
-		if (dwRes != ERROR_SUCCESS) {
-			fprintf(stderr, "SetEntriesInAcl() failed: %d\n", GetLastError());
-			return false;
-		}
-
-		mapSD = (PSECURITY_DESCRIPTOR)LocalAlloc(LPTR, SECURITY_DESCRIPTOR_MIN_LENGTH);
-		if (mapSD == NULL) {
-			fprintf(stderr, "LocalAlloc() failed: %d\n", GetLastError());
-			return false;
-		}
-
-		if (!InitializeSecurityDescriptor(mapSD, SECURITY_DESCRIPTOR_REVISION)) {
-			fprintf(stderr, "InitializeSecurityDescriptor() failed: %d\n", GetLastError());
-			return false;
-		}
-
-		if (!SetSecurityDescriptorDacl(mapSD, TRUE, (PACL)NULL, FALSE)) {
-			fprintf(stderr, "SetSecurityDescriptorDacl() failed: %d\n", GetLastError());
-			return false;
-		}
-
-		mapSa.nLength = sizeof(SECURITY_ATTRIBUTES);
-		mapSa.lpSecurityDescriptor = mapSD;
-		mapSa.bInheritHandle = TRUE;
-
-
-
-
-		ghMMFileMap = CreateFileMapping(INVALID_HANDLE_VALUE, &mapSa, PAGE_READWRITE, 0, nStructLen, szFileMappingObj);
-		if (ghMMFileMap != NULL)
+		lpView = MapViewOfFile(ghMMFileMap, FILE_MAP_READ | FILE_MAP_WRITE, 0, 0, 0);
+		if (lpView != NULL)
 		{
-			if ((nerror = GetLastError()) == ERROR_ALREADY_EXISTS)
+			memcpy(lpView, &protocoleInfo, sizeof(WSAPROTOCOL_INFOW));
+			UnmapViewOfFile(lpView);
+
+			SetEvent(ghParentFileMappingEvent);
+			if (WaitForSingleObject(ghChildFileMappingEvent, 20000) == WAIT_OBJECT_0)
 			{
-				fprintf(stderr, "CreateFileMapping() failed: mapping already exists\n");
+				fprintf(stderr, "WaitForSingleObject() object failed: %d\n", GetLastError());
 				return false;
 			}
-			else
-			{
-				lpView = MapViewOfFile(ghMMFileMap, FILE_MAP_READ | FILE_MAP_WRITE, 0, 0, 0);
-				if (lpView != NULL)
-				{
-					memcpy(lpView, &protocoleInfo, nStructLen);
-					UnmapViewOfFile(lpView);
-
-					SetEvent(ghParentFileMappingEvent);
-					if (WaitForSingleObject(ghChildFileMappingEvent, 20000) == WAIT_OBJECT_0)
-					{
-						fprintf(stderr, "WaitForSingleObject() object failed: %d\n", GetLastError());
-						return false;
-					}
-				}
-				else
-				{
-					fprintf(stderr, "MapViewOfFile() failed: %d\n", GetLastError());
+		}
+		else
+		{
+			fprintf(stderr, "MapViewOfFile() failed: %d\n", GetLastError());
 					
-				}
-			}
-			CloseHandle(ghMMFileMap);
-			ghMMFileMap = NULL;
 		}
-		else {
-			fprintf(stderr, "CreateFileMapping() failed: %d\n", GetLastError());
-
-		}
+			
+		CloseHandle(ghMMFileMap);
+		ghMMFileMap = NULL;
 
 		CloseHandle(pi.hThread);
 		CloseHandle(pi.hProcess);
