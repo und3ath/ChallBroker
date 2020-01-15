@@ -59,21 +59,17 @@ bool GetAccountSidFromUsername(char* username, PSID Sid, DWORD SidSize);
 int main(int argc, char** argv)
 {
 	int nStatus;
-
 	WSADATA wsadata;
-
 
 	if (!EnableWindowsPrivileges((char*)SE_CREATE_GLOBAL_NAME)) {
 		fprintf(stderr, "Unable to adjuste privileges\n");
 		exit(-1);
 	}
 
-
 	if (!EnableWindowsPrivileges((char*)SE_DEBUG_NAME)) {
 		fprintf(stderr, "Unable to adjuste privileges\n");
 		exit(-1);
 	}
-
 
 	// Load the configuration file; 
 	if (g_xmlConf.LoadFile(g_xmlconfigfile) != XML_SUCCESS) {
@@ -108,13 +104,8 @@ int main(int argc, char** argv)
 		StartChallenge();
 	}
 
-	
-
 	return 0;
 }
-
-
-
 
 
 bool EnableWindowsPrivileges(char* Privilege)
@@ -140,7 +131,6 @@ bool EnableWindowsPrivileges(char* Privilege)
 
 	return true;
 }
-
 
 
 void DisplayError(LPSTR pszAPI)
@@ -308,6 +298,7 @@ bool GetAccountSidFromUsername(char* username, PSID Sid, DWORD SidSize)
 // Dispath clients, logon user, and spawn subprocess. 
 bool DispatchClient(SOCKET client, challenge_t* chall) {
 	char szChildComandLineBuf[MAX_PATH] = { 0 };
+	char szUSerHomeDirectory[MAX_PATH] = { 0 };
 
 	HANDLE ghParentFileMappingEvent = NULL;
 	HANDLE ghChildFileMappingEvent = NULL;
@@ -435,6 +426,7 @@ bool DispatchClient(SOCKET client, challenge_t* chall) {
 
 	// build the cmd line
 	sprintf_s(szChildComandLineBuf, MAX_PATH, "%s %d %d %d", chall->path, (int)ghParentFileMappingEvent, (int)ghChildFileMappingEvent, (int)ghMMFileMap);
+	sprintf_s(szUSerHomeDirectory, MAX_PATH, "%s%s", "c:\\users\\", chall->user);
 
 	// Logon the user and get his primary token
 	if (!LogonUser(chall->user, ".", chall->pass, LOGON32_LOGON_BATCH, LOGON32_PROVIDER_DEFAULT, &hUserToken)) {
@@ -498,7 +490,7 @@ bool DispatchClient(SOCKET client, challenge_t* chall) {
 
 	// Start the child process 
 	// todo the startup path
-	if(CreateProcessAsUser(hUserToken, 0, szChildComandLineBuf, &procSa, 0, TRUE, NULL, NULL, "C:\\Users\\ch99", &si, &pi))
+	if(CreateProcessAsUser(hUserToken, 0, szChildComandLineBuf, &procSa, 0, TRUE, NULL, NULL, szUSerHomeDirectory, &si, &pi))
 	{
 		WSAPROTOCOL_INFOW protocoleInfo;
 		int nerror;
@@ -535,8 +527,6 @@ bool DispatchClient(SOCKET client, challenge_t* chall) {
 		DisplayError((LPSTR)"CreateProcessWithLogonW");
 		return false;
 	}
-
-
 
 	if (ghParentFileMappingEvent != NULL) {
 		CloseHandle(ghParentFileMappingEvent);
