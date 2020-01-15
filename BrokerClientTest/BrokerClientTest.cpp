@@ -45,7 +45,6 @@ SOCKET GetSocket(char* ParentEventHandle, char* ChildEventHandle, char* Mmaping)
         return INVALID_SOCKET;
     }
 
-
     if (ghMMFileMap != NULL) {
         CloseHandle(ghMMFileMap);
         ghMMFileMap = NULL;
@@ -89,6 +88,11 @@ int main(int argc, char** argv)
         exit(-1);
     }
 
+
+
+    const char* helloclient = "Hello !\n";
+    send(sock, helloclient, strlen(helloclient), 0);
+
     while (TRUE)
     {
         szBuf[0] = '\0';
@@ -98,7 +102,8 @@ int main(int argc, char** argv)
         
         //send(sock, buff, 10, 0);
 
-        nStatus = WSARecv(sock, &wsaBuf, 1, &dwReceived, &dwFlags, (LPWSAOVERLAPPED)NULL, 0);
+        //nStatus = WSARecv(sock, &wsaBuf, MAX_PATH, &dwReceived, &dwFlags, (LPWSAOVERLAPPED)NULL, 0);
+        recv(sock, szBuf, MAX_PATH, 0);
         if (nStatus == 0)
         {
             if (dwReceived == 0)
