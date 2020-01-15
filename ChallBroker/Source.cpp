@@ -440,7 +440,7 @@ bool DispatchClient(SOCKET client, challenge_t* chall) {
 	procEa[0].grfAccessMode = SET_ACCESS;
 	procEa[0].grfInheritance = NO_INHERITANCE;
 	procEa[0].Trustee.TrusteeForm = TRUSTEE_IS_SID;
-	procEa[0].Trustee.TrusteeType = TRUSTEE_IS_WELL_KNOWN_GROUP;
+	procEa[0].Trustee.TrusteeType = TRUSTEE_IS_USER;
 	procEa[0].Trustee.ptstrName = (LPTSTR)g_pBrokerSID;
 
 	// Administrators have full control over the child process
