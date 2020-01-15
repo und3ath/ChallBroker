@@ -1,0 +1,10 @@
+Challbroker 
+
+Broker user need to have SE_ASSIGNPRIMARYTOKEN_NAME , SE_INCREASE_QUOTA_NAME , SE_CREATE_TOKEN_NAME permissions
+
+
+Challenges users as defined in the xml configuration need to have SE_BATCH_LOGON_NAME permissions
+
+
+
+
