@@ -61,8 +61,7 @@ int main(int argc, char** argv)
 	WSADATA wsadata;
 	errno_t err;
 
-	err = fopen_s(&g_logFile, "challbroker-error.log", "a+");
-	if (err != 0) {
+	if((err = fopen_s(&g_logFile, "challbroker-error.log", "a+")) != 0) {
 		fprintf(stderr, "fopen_s() faailed: %d\n", err);
 		exit(-1);
 	}
@@ -290,14 +289,12 @@ bool DispatchClient(SOCKET client, challenge_t* chall) {
 	eaEvent[0].Trustee.TrusteeType = TRUSTEE_IS_GROUP;
 	eaEvent[0].Trustee.ptstrName = (LPTSTR)g_pAdministratorsSID;
 	
-	dwRes = SetEntriesInAcl(1, eaEvent, nullptr, &pAclEvent);
-	if (dwRes != ERROR_SUCCESS) {
+	if((dwRes = SetEntriesInAcl(1, eaEvent, nullptr, &pAclEvent)) != ERROR_SUCCESS) {
 		fprintf(g_logFile, "SetEntriesInAcl() failed: %d\n", GetLastError());
 		return false;
 	}
 
-	pSDEvent = (PSECURITY_DESCRIPTOR)LocalAlloc(LPTR, SECURITY_DESCRIPTOR_MIN_LENGTH);
-	if (pSDEvent == nullptr) {
+	if((pSDEvent = (PSECURITY_DESCRIPTOR)LocalAlloc(LPTR, SECURITY_DESCRIPTOR_MIN_LENGTH)) == nullptr) {
 		fprintf(g_logFile, "LocalAlloc() failed: %d\n", GetLastError());
 		return false;
 	}
@@ -341,14 +338,12 @@ bool DispatchClient(SOCKET client, challenge_t* chall) {
 	mapEa[0].Trustee.TrusteeType = TRUSTEE_IS_GROUP;
 	mapEa[0].Trustee.ptstrName = (LPTSTR)g_pAdministratorsSID;
 
-	dwRes = SetEntriesInAcl(1, mapEa, nullptr, &pmapAcl);
-	if (dwRes != ERROR_SUCCESS) {
+	if((dwRes = SetEntriesInAcl(1, mapEa, nullptr, &pmapAcl)) != ERROR_SUCCESS) {
 		fprintf(g_logFile, "SetEntriesInAcl() failed: %d\n", GetLastError());
 		return false;
 	}
 
-	mapSD = (PSECURITY_DESCRIPTOR)LocalAlloc(LPTR, SECURITY_DESCRIPTOR_MIN_LENGTH);
-	if (mapSD == nullptr) {
+	if((mapSD = (PSECURITY_DESCRIPTOR)LocalAlloc(LPTR, SECURITY_DESCRIPTOR_MIN_LENGTH)) == nullptr) {
 		fprintf(g_logFile, "LocalAlloc() failed: %d\n", GetLastError());
 		return false;
 	}
@@ -367,8 +362,7 @@ bool DispatchClient(SOCKET client, challenge_t* chall) {
 	mapSa.lpSecurityDescriptor = mapSD;
 	mapSa.bInheritHandle = TRUE;
 
-	ghMMFileMap = CreateFileMapping(INVALID_HANDLE_VALUE, &mapSa, PAGE_READWRITE, 0, sizeof(WSAPROTOCOL_INFOW), nullptr);
-	if (ghMMFileMap == nullptr) {
+	if((ghMMFileMap = CreateFileMapping(INVALID_HANDLE_VALUE, &mapSa, PAGE_READWRITE, 0, sizeof(WSAPROTOCOL_INFOW), nullptr)) == nullptr) {
 		fprintf(g_logFile, "CreateFileMapping() failed: %d\n", GetLastError());
 		return false;
 	}
@@ -451,9 +445,8 @@ bool DispatchClient(SOCKET client, challenge_t* chall) {
 			UnmapViewOfFile(lpView);
 
 			SetEvent(ghParentFileMappingEvent);
-			res = WaitForSingleObject(ghChildFileMappingEvent, 5000);
-			if(res != WAIT_OBJECT_0) {
-				if (res = WAIT_TIMEOUT) {
+			if((res = WaitForSingleObject(ghChildFileMappingEvent, 5000)) != WAIT_OBJECT_0) {
+				if (res == WAIT_TIMEOUT) {
 					fprintf(g_logFile, "WaitForSingleObject() reach timeout!\n");
 				}
 				else {
