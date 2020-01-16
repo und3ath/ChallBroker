@@ -16,7 +16,7 @@ SOCKET GetSocket(char* ParentEventHandle, char* ChildEventHandle, char* Mmaping)
 
 
 
-	if (WaitForSingleObject(ghParentFileMappingEvent, 20000) == WAIT_FAILED) {
+	if (WaitForSingleObject(ghParentFileMappingEvent, 5000) == WAIT_FAILED) {
 		fprintf(stderr, "Waitforsingleobject failed\n");
 		return INVALID_SOCKET;
 	}
