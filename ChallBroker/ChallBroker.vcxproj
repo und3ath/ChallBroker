@@ -137,6 +137,9 @@
   <ItemGroup>
     <Xml Include="challbroker.xml" />
   </ItemGroup>
+  <ItemGroup>
+    <None Include="..\README" />
+  </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets" />
 </Project>

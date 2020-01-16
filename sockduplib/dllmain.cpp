@@ -8,7 +8,7 @@ SOCKET GetSocket(char* ParentEventHandle, char* ChildEventHandle, char* Mmaping)
 	HANDLE ghParentFileMappingEvent = NULL;
 	HANDLE ghChildFileMappingEvent = NULL;
 	HANDLE ghMMFileMap = NULL;
-
+	DWORD res;
 
 	ghParentFileMappingEvent = (HANDLE)atoi(ParentEventHandle);
 	ghChildFileMappingEvent = (HANDLE)atoi(ChildEventHandle);
@@ -16,8 +16,13 @@ SOCKET GetSocket(char* ParentEventHandle, char* ChildEventHandle, char* Mmaping)
 
 
 
-	if (WaitForSingleObject(ghParentFileMappingEvent, 5000) == WAIT_FAILED) {
-		fprintf(stderr, "Waitforsingleobject failed\n");
+	if ((res = WaitForSingleObject(ghParentFileMappingEvent, 5000)) != WAIT_OBJECT_0) {
+		if (res == WAIT_TIMEOUT) {
+			fprintf(stderr, "Waitforsingleobject() timeout reached!\n");
+		}
+		else {
+			fprintf(stderr, "Waitforsingleobject() failed: %ld\n", GetLastError());
+		}
 		return INVALID_SOCKET;
 	}
 
@@ -34,7 +39,7 @@ SOCKET GetSocket(char* ParentEventHandle, char* ChildEventHandle, char* Mmaping)
 
 	}
 	else {
-		fprintf(stderr, "MapViewOfFile failed: %d\n", GetLastError());
+		fprintf(stderr, "MapViewOfFile failed: %ld\n", GetLastError());
 		return INVALID_SOCKET;
 	}
 
@@ -49,11 +54,7 @@ SOCKET GetSocket(char* ParentEventHandle, char* ChildEventHandle, char* Mmaping)
 
 
 
-BOOL APIENTRY DllMain( HMODULE hModule,
-                       DWORD  ul_reason_for_call,
-                       LPVOID lpReserved
-                     )
-{
+BOOL APIENTRY DllMain( HMODULE hModule, DWORD  ul_reason_for_call, LPVOID lpReserved) {
     switch (ul_reason_for_call)
     {
     case DLL_PROCESS_ATTACH:

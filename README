@@ -5,6 +5,7 @@ Broker user need to have SE_ASSIGNPRIMARYTOKEN_NAME , SE_INCREASE_QUOTA_NAME , S
 
 Challenges users as defined in the xml configuration need to have SE_BATCH_LOGON_NAME permissions
 
+Install: Create C:\ProgramData\ChallBroker folder and copy the challbroker.xml config into. 
 
-
+sc.exe create ChallBroker binpath=ChallBroker.exe start=auto
 

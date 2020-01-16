@@ -30,4 +30,7 @@
   <ItemGroup>
     <Xml Include="challbroker.xml" />
   </ItemGroup>
+  <ItemGroup>
+    <None Include="..\README" />
+  </ItemGroup>
 </Project>

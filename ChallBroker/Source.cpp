@@ -18,6 +18,8 @@ using namespace tinyxml2;
 #include <thread>
 #include <vector>
 #include <ctime>
+#include <future>
+#include <chrono>
 
 
 char g_listenIP[]= "127.0.0.1";
@@ -28,6 +30,7 @@ typedef struct challenge {
 	char user[MAX_PATH];
 	char pass[MAX_PATH];
 	char port[20];
+	PHANDLE stopEvent;
 } challenge_t;
 
 
@@ -35,7 +38,7 @@ typedef struct challenge {
 // global vars
 FILE* g_logFile;
 tinyxml2::XMLDocument g_xmlConf;
-const char* g_xmlconfigfile = "challbroker.xml";
+const char* g_xmlconfigfile = "C:\\ProgramData\\ChallBroker\\challbroker.xml";
 std::list<challenge_t*> g_challenges;
 std::vector<std::thread> g_threadsVector;
 PSID g_pBrokerSID;
@@ -54,10 +57,52 @@ bool GetAccountSidFromUsername(char* username, PSID Sid, DWORD SidSize);
 
 
 
+// service specific
+SERVICE_STATUS g_ServiceStatus = { 0 };
+SERVICE_STATUS_HANDLE g_StatusHandle = nullptr;
+HANDLE g_ServiceStopEvent = INVALID_HANDLE_VALUE;
+HANDLE g_StopEvent = INVALID_HANDLE_VALUE;
+void WINAPI ServiceMain(DWORD argc, LPTSTR* arvg);
+void WINAPI ServiceCtrlHandler(DWORD);
+DWORD WINAPI ServiceWorkerThread(LPVOID lpParam);
+const char* g_serviceName = "Challenges Broker";
+
+std::promise<void> exitSignal;
+
+
+
+
 
 int main(int argc, char** argv)
 {
-	int nStatus;
+
+	errno_t err;
+	if ((err = fopen_s(&g_logFile, "C:\\ProgramData\\ChallBroker\\challbroker-error.log", "a+")) != 0) {
+		fprintf(stderr, "fopen_s() failed: %d\n", err);
+		exit(-1);
+	}
+
+
+
+
+
+	SERVICE_TABLE_ENTRY ServiceTable[] = { {(LPSTR)g_serviceName, (LPSERVICE_MAIN_FUNCTION)ServiceMain}, {nullptr, nullptr} };
+
+
+
+
+	if (StartServiceCtrlDispatcher(ServiceTable) == false) {
+		fprintf(g_logFile, "StartServiceCtrlDispatcher() failed: %d\n", GetLastError());
+		return -1;
+	}
+
+
+
+
+
+
+
+	/*int nStatus;
 	WSADATA wsadata;
 	errno_t err;
 
@@ -98,11 +143,149 @@ int main(int argc, char** argv)
 	StartChallenge();
 
 	fclose(g_logFile);
-
+	*/
 	return 0;
 }
 
+void WINAPI ServiceMain(DWORD argc, LPTSTR* argv)
+{
+	DWORD status = E_FAIL;
+	if ((g_StatusHandle = RegisterServiceCtrlHandler(g_serviceName, ServiceCtrlHandler)) == nullptr) {
+		fprintf(g_logFile, "RegisterServiceCtrlHandler() failed: %d\n", GetLastError());
+		return;
+	}
 
+
+	SecureZeroMemory(&g_ServiceStatus, sizeof(g_ServiceStatus));
+	g_ServiceStatus.dwServiceType = SERVICE_WIN32_OWN_PROCESS;
+	g_ServiceStatus.dwControlsAccepted = 0;
+	g_ServiceStatus.dwCurrentState = SERVICE_START_PENDING;
+	g_ServiceStatus.dwWin32ExitCode = 0;
+	g_ServiceStatus.dwServiceSpecificExitCode = 0;
+	g_ServiceStatus.dwCheckPoint = 0;
+
+
+	if (SetServiceStatus(g_StatusHandle, &g_ServiceStatus) == false) {
+		fprintf(g_logFile, "SetServiceStatus() failed: %d\n", GetLastError());
+		return;
+	}
+
+	g_ServiceStopEvent = CreateEvent(nullptr, true, false, nullptr);
+	if (g_ServiceStopEvent == nullptr) {
+		g_ServiceStatus.dwControlsAccepted = 0;
+		g_ServiceStatus.dwCurrentState = SERVICE_STOPPED;
+		g_ServiceStatus.dwWin32ExitCode = GetLastError();
+		g_ServiceStatus.dwCheckPoint = -1;
+		if (SetServiceStatus(g_StatusHandle, &g_ServiceStatus) == false) {
+			fprintf(g_logFile, "SetServiceStatus() failed: %d\n", GetLastError());
+		}
+		return;
+	}
+
+	g_ServiceStatus.dwControlsAccepted = SERVICE_ACCEPT_STOP;
+	g_ServiceStatus.dwCurrentState = SERVICE_RUNNING;
+	g_ServiceStatus.dwWin32ExitCode = 0;
+	g_ServiceStatus.dwCheckPoint = 0;
+
+	if (SetServiceStatus(g_StatusHandle, &g_ServiceStatus) == false) {
+		fprintf(g_logFile, "SetServiceStatus() failed: %d\n", GetLastError());
+	}
+
+	HANDLE hthread = CreateThread(NULL, 0, ServiceWorkerThread, nullptr, 0, nullptr);
+	WaitForSingleObject(hthread, INFINITE);
+	CloseHandle(hthread);
+
+	g_ServiceStatus.dwControlsAccepted = 0;
+	g_ServiceStatus.dwCurrentState = SERVICE_STOPPED;
+	g_ServiceStatus.dwWin32ExitCode = 0;
+	g_ServiceStatus.dwCheckPoint = 3;
+
+	if (SetServiceStatus(g_StatusHandle, &g_ServiceStatus) == FALSE)
+	{
+		fprintf(g_logFile, "SetServiceStatus() failed: %d\n", GetLastError());
+	}
+
+}
+
+void WINAPI ServiceCtrlHandler(DWORD CtrlCode)
+{
+	switch (CtrlCode)
+	{
+	case SERVICE_CONTROL_STOP:
+
+		fprintf(g_logFile, "My Sample Service: ServiceCtrlHandler: SERVICE_CONTROL_STOP Request");
+
+		if (g_ServiceStatus.dwCurrentState != SERVICE_RUNNING)
+			break;
+
+		for (auto const& hh : g_challenges) {
+			SetEvent(*hh->stopEvent);
+		}
+		
+
+		g_ServiceStatus.dwControlsAccepted = 0;
+		g_ServiceStatus.dwCurrentState = SERVICE_STOP_PENDING;
+		g_ServiceStatus.dwWin32ExitCode = 0;
+		g_ServiceStatus.dwCheckPoint = 4;
+
+		if (SetServiceStatus(g_StatusHandle, &g_ServiceStatus) == FALSE) {
+			fprintf(g_logFile, "My Sample Service: ServiceCtrlHandler: SetServiceStatus returned error");
+		}
+
+		// This will signal the worker thread to start shutting down
+		SetEvent(g_ServiceStopEvent);
+
+		break;
+
+	default:
+		break;
+	}
+
+	fprintf(g_logFile, "My Sample Service: ServiceCtrlHandler: Exit");
+}
+
+DWORD WINAPI ServiceWorkerThread(LPVOID lpParam)
+{
+	int nStatus;
+	WSADATA wsadata;
+	errno_t err;
+
+
+
+	// Load the configuration file; 
+	if (g_xmlConf.LoadFile(g_xmlconfigfile) != XML_SUCCESS) {
+		fprintf(g_logFile, "Failed to open xml config : %s\n", g_xmlconfigfile);
+		exit(-1);
+	}
+
+	g_pBrokerSID = (PSID)LocalAlloc(LPTR, SECURITY_MAX_SID_SIZE);
+	if (!GetAccountSidFromUsername((char*)"broker", g_pBrokerSID, SECURITY_MAX_SID_SIZE)) {
+		fprintf(g_logFile, "GetAccountSidFromUsername() failed: %d\n", GetLastError());
+		exit(-1);
+	}
+
+	if (!AllocateAndInitializeSid(&g_SIDAuthNT, 2, SECURITY_BUILTIN_DOMAIN_RID, DOMAIN_ALIAS_RID_ADMINS, 0, 0, 0, 0, 0, 0, &g_pAdministratorsSID)) {
+		fprintf(g_logFile, "AllocateAndInitializeSid() failed: %d\n", GetLastError());
+		exit(-1);
+	}
+
+	// Initialize winsock dll. 
+	if ((nStatus = WSAStartup(0x202, &wsadata)) != 0) {
+		fprintf(g_logFile, "Winsock2 Initialization failed: %d\n", nStatus);
+		WSACleanup();
+		exit(-1);
+	}
+
+	if (!ReadConfig()) {
+		fprintf(g_logFile, "ReadConfig() failed.\n");
+		exit(-1);
+	}
+
+	StartChallenge();
+
+	fclose(g_logFile);
+	return ERROR_SUCCESS;
+}
 
 
 bool ReadConfig()
@@ -137,10 +320,11 @@ bool ReadConfig()
 	return true;
 }
 
-
 void StartChallenge()
 {
 	for (auto const& i : g_challenges) {
+		HANDLE stopevent = CreateEvent(nullptr, true, false, nullptr);
+		i->stopEvent = &stopevent;
 		g_threadsVector.emplace_back(std::thread(ChallengeBrokerThread, i));
 	}
 
@@ -149,7 +333,6 @@ void StartChallenge()
 		th.join();
 	}
 }
-
 
 // Listening thread for handling clients
 void ChallengeBrokerThread(challenge_t* chall)
@@ -163,6 +346,13 @@ void ChallengeBrokerThread(challenge_t* chall)
 	struct addrinfo hints;
 	struct addrinfo* res;
 	struct addrinfo* pAddr;
+
+	HANDLE hEvents[2];
+	hEvents[0] = CreateEvent(nullptr, FALSE, FALSE, nullptr);
+	hEvents[1] = *chall->stopEvent;
+
+
+
 
 	memset(&hints, 0, sizeof(hints));
 	hints.ai_family = AF_UNSPEC;
@@ -204,8 +394,19 @@ void ChallengeBrokerThread(challenge_t* chall)
 	}
 
 	nFromLen = sizeof(saFrom);
-	while (true) {
-		acceptsock = WSAAccept(listensock, (struct sockaddr*)&saFrom, &nFromLen, nullptr, 0);
+	while (true) 
+	{
+		//acceptsock = WSAAccept(listensock, (struct sockaddr*)&saFrom, &nFromLen, nullptr, 0);
+		WSAEventSelect(listensock, hEvents[0], FD_ACCEPT);
+
+		if (WaitForMultipleObjects(2, hEvents, FALSE, INFINITE) == WAIT_OBJECT_0) {
+			acceptsock = WSAAccept(listensock, (struct sockaddr*) & saFrom, &nFromLen, nullptr, 0);
+		}
+		else {
+			break;
+		}
+
+
 		if (acceptsock == INVALID_SOCKET) {
 			fprintf(g_logFile, "WSAAccept failed. Error: %d\n", WSAGetLastError());
 			break;
@@ -214,9 +415,11 @@ void ChallengeBrokerThread(challenge_t* chall)
 		if (!DispatchClient(acceptsock, chall)) {
 			fprintf(g_logFile, "DispatchClient() failed\n");
 		}
-	}	
-}
+	}
 
+	//WSAEventSelect(listensock, hEvents[0], 0);
+	CloseHandle(hEvents);
+}
 
 
 bool GetAccountSidFromUsername(char* username, PSID Sid, DWORD SidSize)
@@ -241,7 +444,6 @@ bool GetAccountSidFromUsername(char* username, PSID Sid, DWORD SidSize)
 	}
 	return succ;
 }
-
 
 // dispatch clients, login user, and spawn subprocess. 
 bool DispatchClient(SOCKET client, challenge_t* chall) {
