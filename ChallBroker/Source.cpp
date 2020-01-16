@@ -67,9 +67,6 @@ void WINAPI ServiceCtrlHandler(DWORD);
 DWORD WINAPI ServiceWorkerThread(LPVOID lpParam);
 const char* g_serviceName = "Challenges Broker";
 
-std::promise<void> exitSignal;
-
-
 
 
 
@@ -191,7 +188,12 @@ void WINAPI ServiceMain(DWORD argc, LPTSTR* argv)
 		fprintf(g_logFile, "SetServiceStatus() failed: %d\n", GetLastError());
 	}
 
-	HANDLE hthread = CreateThread(NULL, 0, ServiceWorkerThread, nullptr, 0, nullptr);
+	HANDLE hthread = INVALID_HANDLE_VALUE;
+	if((hthread = CreateThread(nullptr, 0, ServiceWorkerThread, nullptr, 0, nullptr)) == nullptr) {
+		fprintf(g_logFile, "CreateThread() failed: %d\n", GetLastError());
+		return;
+	}
+
 	WaitForSingleObject(hthread, INFINITE);
 	CloseHandle(hthread);
 
@@ -200,8 +202,7 @@ void WINAPI ServiceMain(DWORD argc, LPTSTR* argv)
 	g_ServiceStatus.dwWin32ExitCode = 0;
 	g_ServiceStatus.dwCheckPoint = 3;
 
-	if (SetServiceStatus(g_StatusHandle, &g_ServiceStatus) == FALSE)
-	{
+	if (SetServiceStatus(g_StatusHandle, &g_ServiceStatus) == FALSE) {
 		fprintf(g_logFile, "SetServiceStatus() failed: %d\n", GetLastError());
 	}
 
@@ -219,7 +220,9 @@ void WINAPI ServiceCtrlHandler(DWORD CtrlCode)
 			break;
 
 		for (auto const& hh : g_challenges) {
-			SetEvent(*hh->stopEvent);
+			if (!SetEvent(*hh->stopEvent)) {
+				fprintf(g_logFile, "SetEvent() failed: %d\n", GetLastError());
+			}
 		}
 		
 
@@ -233,7 +236,9 @@ void WINAPI ServiceCtrlHandler(DWORD CtrlCode)
 		}
 
 		// This will signal the worker thread to start shutting down
-		SetEvent(g_ServiceStopEvent);
+		if (!SetEvent(g_ServiceStopEvent)) {
+			fprintf(g_logFile, "SetEvent() failed: %d\n", GetLastError());
+		}
 
 		break;
 
@@ -286,7 +291,6 @@ DWORD WINAPI ServiceWorkerThread(LPVOID lpParam)
 	fclose(g_logFile);
 	return ERROR_SUCCESS;
 }
-
 
 bool ReadConfig()
 {	
