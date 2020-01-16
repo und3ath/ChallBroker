@@ -33,6 +33,7 @@ typedef struct challenge {
 
 
 // global vars
+FILE* g_logFile;
 tinyxml2::XMLDocument g_xmlConf;
 const char* g_xmlconfigfile = "challbroker.xml";
 std::list<challenge_t*> g_challenges;
@@ -49,8 +50,6 @@ bool ReadConfig();
 void StartChallenge();
 void ChallengeBrokerThread(challenge_t* chall);
 bool DispatchClient(SOCKET client, challenge_t* chall);
-void DisplayError(LPSTR pszAPI);
-bool EnableWindowsPrivileges(char* Privilege);
 bool GetAccountSidFromUsername(char* username, PSID Sid, DWORD SidSize);
 
 
@@ -60,95 +59,58 @@ int main(int argc, char** argv)
 {
 	int nStatus;
 	WSADATA wsadata;
+	errno_t err;
 
-	if (!EnableWindowsPrivileges((char*)SE_CREATE_GLOBAL_NAME)) {
-		fprintf(stderr, "Unable to adjust privileges\n");
+	err = fopen_s(&g_logFile, "challbroker-error.log", "a+");
+	if (err != 0) {
+		fprintf(stderr, "fopen_s() faailed: %d\n", err);
 		exit(-1);
 	}
-
-	if (!EnableWindowsPrivileges((char*)SE_DEBUG_NAME)) {
-		fprintf(stderr, "Unable to adjust privileges\n");
-		exit(-1);
-	}
-
+	
 	// Load the configuration file; 
 	if (g_xmlConf.LoadFile(g_xmlconfigfile) != XML_SUCCESS) {
-		fprintf(stderr, "Failed to open xml config : %s\n", g_xmlconfigfile);
+		fprintf(g_logFile, "Failed to open xml config : %s\n", g_xmlconfigfile);
 		exit(-1);
 	}
-
-
 	
 	g_pBrokerSID = (PSID)LocalAlloc(LPTR, SECURITY_MAX_SID_SIZE);
 	if (!GetAccountSidFromUsername((char*)"broker", g_pBrokerSID, SECURITY_MAX_SID_SIZE)) {
-		fprintf(stderr, "GetAccountSidFromUsername() failed: %d\n", GetLastError());
+		fprintf(g_logFile, "GetAccountSidFromUsername() failed: %d\n", GetLastError());
 		exit(-1);
 	}
-
 	
 	if (!AllocateAndInitializeSid(&g_SIDAuthNT, 2, SECURITY_BUILTIN_DOMAIN_RID, DOMAIN_ALIAS_RID_ADMINS, 0, 0, 0, 0, 0, 0, &g_pAdministratorsSID)) {
-		fprintf(stderr, "AllocateAndInitializeSid() failed: %d\n", GetLastError());
+		fprintf(g_logFile, "AllocateAndInitializeSid() failed: %d\n", GetLastError());
 		exit(-1);
 	}
-
 
     // Initialize winsock dll. 
 	if ((nStatus = WSAStartup(0x202, &wsadata)) != 0) {
-		fprintf(stderr, "Winsock2 Initialization failed: %d\n", nStatus);
+		fprintf(g_logFile, "Winsock2 Initialization failed: %d\n", nStatus);
 		WSACleanup();
 		exit(-1);
 	}
 
-
-	if (ReadConfig()) {
-		StartChallenge();
+	if (!ReadConfig()) {
+		fprintf(g_logFile, "ReadConfig() failed.\n");
+		exit(-1);
 	}
+
+	StartChallenge();
+
+	fclose(g_logFile);
 
 	return 0;
 }
 
 
-bool EnableWindowsPrivileges(char* Privilege)
-{
-	LUID luid = {};
-	TOKEN_PRIVILEGES tp;
-	HANDLE hprocess = GetCurrentProcess();
-	HANDLE htoken = {};
-	tp.PrivilegeCount = 1;
-	tp.Privileges[0].Luid = luid;
-	tp.Privileges[0].Attributes = SE_PRIVILEGE_ENABLED;
-	if (!LookupPrivilegeValue(nullptr, Privilege, &luid)) {
-		return false;
-	}
-
-	if (!OpenProcessToken(hprocess, TOKEN_ALL_ACCESS, &htoken)) {
-		return false;
-	}
-
-	if (!AdjustTokenPrivileges(htoken, FALSE, &tp, sizeof(PTOKEN_PRIVILEGES), (PTOKEN_PRIVILEGES)nullptr, (PDWORD)nullptr)) {
-		return false;
-	}
-
-	return true;
-}
-
-
-void DisplayError(LPSTR pszAPI)
-{
-	LPVOID lpvMessageBuffer;
-	FormatMessage(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM, nullptr, GetLastError(), MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), (LPSTR)&lpvMessageBuffer, 0, nullptr);
-	fprintf(stderr, "ERROR: API        = %s.\n", pszAPI);
-	fprintf(stderr, "       error code = %d.\n", GetLastError());
-	fprintf(stderr, "       message    = %s.\n", (LPSTR)lpvMessageBuffer);
-	LocalFree(lpvMessageBuffer);
-}
 
 
 bool ReadConfig()
 {	
 	XMLNode* root = g_xmlConf.FirstChildElement("challenges");
 	if (root == nullptr) {
-		fprintf(stderr, "Parsing xml failed \n");
+		fprintf(g_logFile, "Parsing xml failed \n");
 		return false;
 	}
 
@@ -159,7 +121,7 @@ bool ReadConfig()
 		challenge_t *chall = nullptr;
 		chall = (challenge_t*)malloc(sizeof(challenge_t));
 		if (chall == nullptr) {
-			fprintf(stderr, "malloc() failed\n");
+			fprintf(g_logFile, "malloc() failed\n");
 			return false;
 		}
 
@@ -180,11 +142,6 @@ bool ReadConfig()
 void StartChallenge()
 {
 	for (auto const& i : g_challenges) {
-		fprintf(stdout, "%s\n", i->path);
-		fprintf(stdout, "%s\n", i->user);
-		fprintf(stdout, "%s\n", i->pass);
-		fprintf(stdout, "%s\n", i->port);
-		
 		g_threadsVector.emplace_back(std::thread(ChallengeBrokerThread, i));
 	}
 
@@ -215,7 +172,7 @@ void ChallengeBrokerThread(challenge_t* chall)
 	hints.ai_flags = AI_PASSIVE;
 
 	if (getaddrinfo(g_listenIP, chall->port, &hints, &res) != NO_ERROR) {
-		fprintf(stderr, "getaddrinfo failed. Error: %d\n", WSAGetLastError());
+		fprintf(g_logFile, "getaddrinfo failed. Error: %d\n", WSAGetLastError());
 		return;
 	}
 
@@ -227,38 +184,36 @@ void ChallengeBrokerThread(challenge_t* chall)
 	}
 
 	if (pAddr == nullptr) {
-		fprintf(stderr, "unable to find suitable socket.\n");
+		fprintf(g_logFile, "unable to find suitable socket.\n");
 		return;
 	}
 	
 	listensock = WSASocketW(pAddr->ai_family, pAddr->ai_socktype, pAddr->ai_protocol, nullptr, 0, WSA_FLAG_OVERLAPPED);
-
 	if (listensock == INVALID_SOCKET) {
-		fprintf(stderr, "WSASocketW() failed. Error: %d\n", WSAGetLastError());
+		fprintf(g_logFile, "WSASocketW() failed. Error: %d\n", WSAGetLastError());
 		return;
 	}
 
 	if (bind(listensock, (struct sockaddr*)pAddr->ai_addr, pAddr->ai_addrlen) == SOCKET_ERROR) {
-		fprintf(stderr, "bind() failed. Error: %d\n", WSAGetLastError());
+		fprintf(g_logFile, "bind() failed. Error: %d\n", WSAGetLastError());
 		return;
 	}
 
 	if (listen(listensock, 5) == SOCKET_ERROR) {
-		fprintf(stderr, "listen() failed. Error: %d\n", WSAGetLastError());
+		fprintf(g_logFile, "listen() failed. Error: %d\n", WSAGetLastError());
 		return;
 	}
 
 	nFromLen = sizeof(saFrom);
 	while (true) {
-		fprintf(stdout, "Waiting for client.\n");
 		acceptsock = WSAAccept(listensock, (struct sockaddr*)&saFrom, &nFromLen, nullptr, 0);
 		if (acceptsock == INVALID_SOCKET) {
-			fprintf(stderr, "WSAAccept failed. Error: %d\n", WSAGetLastError());
+			fprintf(g_logFile, "WSAAccept failed. Error: %d\n", WSAGetLastError());
 			break;
 		}
 
 		if (!DispatchClient(acceptsock, chall)) {
-			fprintf(stderr, "DispatchClient() failed\n");
+			fprintf(g_logFile, "DispatchClient() failed\n");
 		}
 	}	
 }
@@ -314,13 +269,13 @@ bool DispatchClient(SOCKET client, challenge_t* chall) {
 
 	// Allocate some specific SID
 	if (!AllocateAndInitializeSid(&g_SIDAuthWorld, 1, SECURITY_WORLD_RID, 0, 0, 0, 0, 0, 0, 0, &pUsersSID)) {
-		fprintf(stderr, "AllocateAndInitializeSid() failed: %d\n", GetLastError());
+		fprintf(g_logFile, "AllocateAndInitializeSid() failed: %d\n", GetLastError());
 		return false;
 	}
 
 	pChallUserSID = (PSID)LocalAlloc(LPTR, SECURITY_MAX_SID_SIZE);
 	if (!GetAccountSidFromUsername(chall->user, pChallUserSID, SECURITY_MAX_SID_SIZE)) {
-		fprintf(stderr, "GetAccountSidFromUsername() failed: %d\n", GetLastError());
+		fprintf(g_logFile, "GetAccountSidFromUsername() failed: %d\n", GetLastError());
 		return false;
 	}
 
@@ -337,23 +292,23 @@ bool DispatchClient(SOCKET client, challenge_t* chall) {
 	
 	dwRes = SetEntriesInAcl(1, eaEvent, nullptr, &pAclEvent);
 	if (dwRes != ERROR_SUCCESS) {
-		fprintf(stderr, "SetEntriesInAcl() failed: %d\n", GetLastError());
+		fprintf(g_logFile, "SetEntriesInAcl() failed: %d\n", GetLastError());
 		return false;
 	}
 
 	pSDEvent = (PSECURITY_DESCRIPTOR)LocalAlloc(LPTR, SECURITY_DESCRIPTOR_MIN_LENGTH);
 	if (pSDEvent == nullptr) {
-		fprintf(stderr, "LocalAlloc() failed: %d\n", GetLastError());
+		fprintf(g_logFile, "LocalAlloc() failed: %d\n", GetLastError());
 		return false;
 	}
 
 	if (!InitializeSecurityDescriptor(pSDEvent, SECURITY_DESCRIPTOR_REVISION)) {
-		fprintf(stderr, "InitializeSecurityDescriptor() failed: %d\n", GetLastError());
+		fprintf(g_logFile, "InitializeSecurityDescriptor() failed: %d\n", GetLastError());
 		return false;
 	}
 
 	if (!SetSecurityDescriptorDacl(pSDEvent, TRUE, pAclEvent, FALSE)) {
-		fprintf(stderr, "SetSecurityDescriptorDacl() failed: %d\n", GetLastError());
+		fprintf(g_logFile, "SetSecurityDescriptorDacl() failed: %d\n", GetLastError());
 		return false;
 	}
 
@@ -363,12 +318,12 @@ bool DispatchClient(SOCKET client, challenge_t* chall) {
 
 	// Create the parent and child event with appropriate DACL
 	if ((ghParentFileMappingEvent = CreateEvent(&saEvent, TRUE, FALSE, nullptr)) == nullptr) {
-		fprintf(stderr, "CreateEvent() failed: %d\n", GetLastError());
+		fprintf(g_logFile, "CreateEvent() failed: %d\n", GetLastError());
 		return false;
 	}
 
 	if ((ghChildFileMappingEvent = CreateEvent(&saEvent, TRUE, FALSE, nullptr)) == nullptr) {
-		fprintf(stderr, "CreateEvent() failed: %d\n", GetLastError());
+		fprintf(g_logFile, "CreateEvent() failed: %d\n", GetLastError());
 		CloseHandle(ghParentFileMappingEvent);
 		return false;
 	}
@@ -388,23 +343,23 @@ bool DispatchClient(SOCKET client, challenge_t* chall) {
 
 	dwRes = SetEntriesInAcl(1, mapEa, nullptr, &pmapAcl);
 	if (dwRes != ERROR_SUCCESS) {
-		fprintf(stderr, "SetEntriesInAcl() failed: %d\n", GetLastError());
+		fprintf(g_logFile, "SetEntriesInAcl() failed: %d\n", GetLastError());
 		return false;
 	}
 
 	mapSD = (PSECURITY_DESCRIPTOR)LocalAlloc(LPTR, SECURITY_DESCRIPTOR_MIN_LENGTH);
 	if (mapSD == nullptr) {
-		fprintf(stderr, "LocalAlloc() failed: %d\n", GetLastError());
+		fprintf(g_logFile, "LocalAlloc() failed: %d\n", GetLastError());
 		return false;
 	}
 
 	if (!InitializeSecurityDescriptor(mapSD, SECURITY_DESCRIPTOR_REVISION)) {
-		fprintf(stderr, "InitializeSecurityDescriptor() failed: %d\n", GetLastError());
+		fprintf(g_logFile, "InitializeSecurityDescriptor() failed: %d\n", GetLastError());
 		return false;
 	}
 
 	if (!SetSecurityDescriptorDacl(mapSD, TRUE, pmapAcl, FALSE)) {
-		fprintf(stderr, "SetSecurityDescriptorDacl() failed: %d\n", GetLastError());
+		fprintf(g_logFile, "SetSecurityDescriptorDacl() failed: %d\n", GetLastError());
 		return false;
 	}
 
@@ -414,7 +369,7 @@ bool DispatchClient(SOCKET client, challenge_t* chall) {
 
 	ghMMFileMap = CreateFileMapping(INVALID_HANDLE_VALUE, &mapSa, PAGE_READWRITE, 0, sizeof(WSAPROTOCOL_INFOW), nullptr);
 	if (ghMMFileMap == nullptr) {
-		fprintf(stderr, "CreateFileMapping() failed: %d\n", GetLastError());
+		fprintf(g_logFile, "CreateFileMapping() failed: %d\n", GetLastError());
 		return false;
 	}
 
@@ -424,12 +379,11 @@ bool DispatchClient(SOCKET client, challenge_t* chall) {
 
 	// login the user and get his primary token
 	if (!LogonUser(chall->user, ".", chall->pass, LOGON32_LOGON_BATCH, LOGON32_PROVIDER_DEFAULT, &hUserToken)) {
-		fprintf(stderr, "LogonUser() failed: %d\n", GetLastError());
+		fprintf(g_logFile, "LogonUser() failed: %d\n", GetLastError());
 		return false;
 	}
 
 	// Create the DACL for the child process
-
 	SECURITY_ATTRIBUTES procSa;
 	EXPLICIT_ACCESS procEa[2];
 	PACL pProcAcl = nullptr;
@@ -453,23 +407,23 @@ bool DispatchClient(SOCKET client, challenge_t* chall) {
 
 	dwRes = SetEntriesInAcl(2, procEa, nullptr, &pProcAcl);
 	if (dwRes != ERROR_SUCCESS) {
-		fprintf(stderr, "SetEntriesInAcl() failed: %d\n", GetLastError());
+		fprintf(g_logFile, "SetEntriesInAcl() failed: %d\n", GetLastError());
 		return false;
 	}
 	
 	procSD = (PSECURITY_DESCRIPTOR)LocalAlloc(LPTR, SECURITY_DESCRIPTOR_MIN_LENGTH);
 	if (procSD == nullptr) {
-		fprintf(stderr, "LocalAlloc() failed: %d\n", GetLastError());
+		fprintf(g_logFile, "LocalAlloc() failed: %d\n", GetLastError());
 		return false;
 	}
 
 	if (!InitializeSecurityDescriptor(procSD, SECURITY_DESCRIPTOR_REVISION)) {
-		fprintf(stderr, "InitializeSecurityDescriptor() failed: %d\n", GetLastError());
+		fprintf(g_logFile, "InitializeSecurityDescriptor() failed: %d\n", GetLastError());
 		return false;
 	}
 
 	if (!SetSecurityDescriptorDacl(procSD, TRUE, pProcAcl, FALSE)) {
-		fprintf(stderr, "SetSecurityDescriptorDacl() failed: %d\n", GetLastError());
+		fprintf(g_logFile, "SetSecurityDescriptorDacl() failed: %d\n", GetLastError());
 		return false;
 	}
 
@@ -477,23 +431,17 @@ bool DispatchClient(SOCKET client, challenge_t* chall) {
 	procSa.lpSecurityDescriptor = procSD;
 	procSa.bInheritHandle = TRUE;
 
-	// Create an environment block for the child process
-	LPVOID env = nullptr;
-	if (!CreateEnvironmentBlock(&env, hUserToken, TRUE)) {
-		fprintf(stderr, "CreateEnvironmentBlock() failed: %d\n", GetLastError());
-		return false;
-	}
+
 
 	// Start the child process 
 	// todo the startup path
-	if(CreateProcessAsUser(hUserToken, 0, szChildComandLineBuf, &procSa, 0, TRUE, 0, nullptr, szUSerHomeDirectory, &si, &pi))
-	{
+	if(CreateProcessAsUser(hUserToken, 0, szChildComandLineBuf, &procSa, 0, TRUE, 0, 0, szUSerHomeDirectory, &si, &pi)) {
 		WSAPROTOCOL_INFOW protocoleInfo;
-		int nerror;
 		LPVOID lpView;
+		DWORD res;
 
 		if (WSADuplicateSocketW(client, pi.dwProcessId, &protocoleInfo) == SOCKET_ERROR) {
-			fprintf(stderr, "WSADuplicateSocketW() failed: %d\n", WSAGetLastError());
+			fprintf(g_logFile, "WSADuplicateSocketW() failed: %d\n", WSAGetLastError());
 			return false;
 		}
 
@@ -503,13 +451,18 @@ bool DispatchClient(SOCKET client, challenge_t* chall) {
 			UnmapViewOfFile(lpView);
 
 			SetEvent(ghParentFileMappingEvent);
-			if (WaitForSingleObject(ghChildFileMappingEvent, 20000) == WAIT_OBJECT_0) {
-				fprintf(stderr, "WaitForSingleObject() object failed: %d\n", GetLastError());
-				return false;
+			res = WaitForSingleObject(ghChildFileMappingEvent, 5000);
+			if(res != WAIT_OBJECT_0) {
+				if (res = WAIT_TIMEOUT) {
+					fprintf(g_logFile, "WaitForSingleObject() reach timeout!\n");
+				}
+				else {
+					fprintf(g_logFile, "WaitForSingleObject() failed: %d\n", GetLastError());
+				}
 			}
 		}
 		else {
-			fprintf(stderr, "MapViewOfFile() failed: %d\n", GetLastError());
+			fprintf(g_logFile, "MapViewOfFile() failed: %d\n", GetLastError());
 					
 		}
 			
@@ -520,7 +473,7 @@ bool DispatchClient(SOCKET client, challenge_t* chall) {
 		CloseHandle(pi.hProcess);
 	}
 	else {
-		DisplayError((LPSTR)"CreateProcessWithLogonW");
+		fprintf(g_logFile, "CreateProcessAsUser() failed: %d\n", GetLastError());
 		return false;
 	}
 

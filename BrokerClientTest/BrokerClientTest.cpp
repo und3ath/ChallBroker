@@ -1,6 +1,6 @@
 #include <iostream>
 #include <WinSock2.h>
-#include "../sockduplib/sockduplib.h"
+#include "sockduplib.h"
 
 FILE* g_fp;
 
