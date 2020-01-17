@@ -67,27 +67,17 @@ DWORD WINAPI ServiceWorkerThread(LPVOID lpParam);
 const char* g_serviceName = "Challenges Broker";
 
 
-
-
 int main(int argc, char** argv)
 {
-
 	errno_t err;
 	if ((err = fopen_s(&g_logFile, "C:\\ProgramData\\ChallBroker\\challbroker-error.log", "a+")) != 0) {
 		fprintf(stderr, "fopen_s() failed: %d\n", err);
 		exit(-1);
 	}
 
-
-
-
-
 	SERVICE_TABLE_ENTRY ServiceTable[] = { {
 			(LPSTR)g_serviceName, (LPSERVICE_MAIN_FUNCTION)ServiceMain},  {NULL, NULL} 
 	};
-
-
-
 
 	if (StartServiceCtrlDispatcher(ServiceTable) == FALSE) {
 		if(g_logFile != NULL)
@@ -95,56 +85,11 @@ int main(int argc, char** argv)
 		return -1;
 	}
 
-
 	if (g_logFile != NULL) {
 		fclose(g_logFile);
 		g_logFile = NULL;
 	}
 
-
-
-	/*int nStatus;
-	WSADATA wsadata;
-	errno_t err;
-
-	if((err = fopen_s(&g_logFile, "challbroker-error.log", "a+")) != 0) {
-		fprintf(stderr, "fopen_s() faailed: %d\n", err);
-		exit(-1);
-	}
-	
-	// Load the configuration file; 
-	if (g_xmlConf.LoadFile(g_xmlconfigfile) != XML_SUCCESS) {
-		fprintf(g_logFile, "Failed to open xml config : %s\n", g_xmlconfigfile);
-		exit(-1);
-	}
-	
-	g_pBrokerSID = (PSID)LocalAlloc(LPTR, SECURITY_MAX_SID_SIZE);
-	if (!GetAccountSidFromUsername((char*)"broker", g_pBrokerSID, SECURITY_MAX_SID_SIZE)) {
-		fprintf(g_logFile, "GetAccountSidFromUsername() failed: %d\n", GetLastError());
-		exit(-1);
-	}
-	
-	if (!AllocateAndInitializeSid(&g_SIDAuthNT, 2, SECURITY_BUILTIN_DOMAIN_RID, DOMAIN_ALIAS_RID_ADMINS, 0, 0, 0, 0, 0, 0, &g_pAdministratorsSID)) {
-		fprintf(g_logFile, "AllocateAndInitializeSid() failed: %d\n", GetLastError());
-		exit(-1);
-	}
-
-    // Initialize winsock dll. 
-	if ((nStatus = WSAStartup(0x202, &wsadata)) != 0) {
-		fprintf(g_logFile, "Winsock2 Initialization failed: %d\n", nStatus);
-		WSACleanup();
-		exit(-1);
-	}
-
-	if (!ReadConfig()) {
-		fprintf(g_logFile, "ReadConfig() failed.\n");
-		exit(-1);
-	}
-
-	StartChallenge();
-
-	fclose(g_logFile);
-	*/
 	return 0;
 }
 
