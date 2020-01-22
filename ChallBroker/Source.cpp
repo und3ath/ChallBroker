@@ -40,7 +40,7 @@ tinyxml2::XMLDocument g_xmlConf;
 const char* g_xmlconfigfile = "C:\\ProgramData\\ChallBroker\\challbroker.xml";
 std::list<challenge_t*> g_challenges;
 std::vector<std::thread> g_threadsVector;
-PSID g_pBrokerSID;
+//PSID g_pBrokerSID;
 PSID g_pAdministratorsSID;
 SID_IDENTIFIER_AUTHORITY g_SIDAuthWorld = SECURITY_WORLD_SID_AUTHORITY;
 SID_IDENTIFIER_AUTHORITY g_SIDAuthNT = SECURITY_NT_AUTHORITY;
@@ -210,11 +210,11 @@ DWORD WINAPI ServiceWorkerThread(LPVOID lpParam)
 		exit(-1);
 	}
 
-	g_pBrokerSID = (PSID)LocalAlloc(LPTR, SECURITY_MAX_SID_SIZE);
-	if (!GetAccountSidFromUsername((char*)"broker", g_pBrokerSID, SECURITY_MAX_SID_SIZE)) {
-		fprintf(g_logFile, "GetAccountSidFromUsername() failed: %d\n", GetLastError());
-		exit(-1);
-	}
+	//g_pBrokerSID = (PSID)LocalAlloc(LPTR, SECURITY_MAX_SID_SIZE);
+	//if (!GetAccountSidFromUsername((char*)"broker", g_pBrokerSID, SECURITY_MAX_SID_SIZE)) {
+	//	fprintf(g_logFile, "GetAccountSidFromUsername() failed: %d\n", GetLastError());
+	//	exit(-1);
+	//}
 
 	if (!AllocateAndInitializeSid(&g_SIDAuthNT, 2, SECURITY_BUILTIN_DOMAIN_RID, DOMAIN_ALIAS_RID_ADMINS, 0, 0, 0, 0, 0, 0, &g_pAdministratorsSID)) {
 		fprintf(g_logFile, "AllocateAndInitializeSid() failed: %d\n", GetLastError());
@@ -532,25 +532,25 @@ bool DispatchClient(SOCKET client, challenge_t* chall) {
 
 	// Create the DACL for the child process
 	SECURITY_ATTRIBUTES procSa;
-	EXPLICIT_ACCESS procEa[2];
+	EXPLICIT_ACCESS procEa[1];
 	PACL pProcAcl = NULL;
 	PSECURITY_DESCRIPTOR procSD = NULL;
-	SecureZeroMemory(&procEa, 2 * sizeof(EXPLICIT_ACCESS));
+	SecureZeroMemory(&procEa, 1 * sizeof(EXPLICIT_ACCESS));
 	// Broker user have full control over the child process
+	//procEa[0].grfAccessPermissions = PROCESS_ALL_ACCESS;
+	//procEa[0].grfAccessMode = SET_ACCESS;
+	//procEa[0].grfInheritance = NO_INHERITANCE;
+	//procEa[0].Trustee.TrusteeForm = TRUSTEE_IS_SID;
+	//procEa[0].Trustee.TrusteeType = TRUSTEE_IS_USER;
+	//procEa[0].Trustee.ptstrName = (LPTSTR)g_pBrokerSID;
+
+	// Administrators have full control over the child process
 	procEa[0].grfAccessPermissions = PROCESS_ALL_ACCESS;
 	procEa[0].grfAccessMode = SET_ACCESS;
 	procEa[0].grfInheritance = NO_INHERITANCE;
 	procEa[0].Trustee.TrusteeForm = TRUSTEE_IS_SID;
-	procEa[0].Trustee.TrusteeType = TRUSTEE_IS_USER;
-	procEa[0].Trustee.ptstrName = (LPTSTR)g_pBrokerSID;
-
-	// Administrators have full control over the child process
-	procEa[1].grfAccessPermissions = PROCESS_ALL_ACCESS;
-	procEa[1].grfAccessMode = SET_ACCESS;
-	procEa[1].grfInheritance = NO_INHERITANCE;
-	procEa[1].Trustee.TrusteeForm = TRUSTEE_IS_SID;
-	procEa[1].Trustee.TrusteeType = TRUSTEE_IS_GROUP;
-	procEa[1].Trustee.ptstrName = (LPTSTR)g_pAdministratorsSID;
+	procEa[0].Trustee.TrusteeType = TRUSTEE_IS_GROUP;
+	procEa[0].Trustee.ptstrName = (LPTSTR)g_pAdministratorsSID;
 
 	dwRes = SetEntriesInAcl(2, procEa, NULL, &pProcAcl);
 	if (dwRes != ERROR_SUCCESS) {

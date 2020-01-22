@@ -31,7 +31,7 @@ int main(int argc, char** argv)
     }
 
     // Use the library to get the socket( you need to initialize WSADATA yourself )
-    sock = GetSocket(argv[1], argv[2], argv[3]);
+    GetSocket(&sock, argv[1], argv[2], argv[3]);
     if (sock == INVALID_SOCKET) {
         fprintf(g_fp, "Unable to get socket \n");
         exit(-1);

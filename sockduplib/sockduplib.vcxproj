@@ -159,7 +159,7 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
-    <ClCompile Include="dllmain.cpp" />
+    <ClCompile Include="sockduplib.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="sockduplib.h" />

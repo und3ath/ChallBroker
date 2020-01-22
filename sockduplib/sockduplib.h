@@ -9,4 +9,4 @@
 #endif
 
 
-extern "C" LIBRARY_API SOCKET GetSocket(char* ParentEventHandle, char* ChildEventHandle, char* Mmaping);
+LIBRARY_API void GetSocket(SOCKET* pSock, char* ParentEventHandle, char* ChildEventHandle, char* Mmaping);

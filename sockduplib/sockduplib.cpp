@@ -1,7 +1,7 @@
 #include "sockduplib.h"
 
 
-SOCKET GetSocket(char* ParentEventHandle, char* ChildEventHandle, char* Mmaping)
+void GetSocket(SOCKET * pSock, char* ParentEventHandle, char* ChildEventHandle, char* Mmaping)
 {
 	WSAPROTOCOL_INFOW ProtocolInfo;
 	SOCKET sockduplicated = INVALID_SOCKET;
@@ -23,7 +23,7 @@ SOCKET GetSocket(char* ParentEventHandle, char* ChildEventHandle, char* Mmaping)
 		else {
 			fprintf(stderr, "Waitforsingleobject() failed: %ld\n", GetLastError());
 		}
-		return INVALID_SOCKET;
+		return;
 	}
 
 
@@ -40,7 +40,7 @@ SOCKET GetSocket(char* ParentEventHandle, char* ChildEventHandle, char* Mmaping)
 	}
 	else {
 		fprintf(stderr, "MapViewOfFile failed: %ld\n", GetLastError());
-		return INVALID_SOCKET;
+		return;
 	}
 
 	if (ghMMFileMap != NULL) {
@@ -48,7 +48,8 @@ SOCKET GetSocket(char* ParentEventHandle, char* ChildEventHandle, char* Mmaping)
 		ghMMFileMap = NULL;
 	}
 
-	return sockduplicated;
+	pSock = &sockduplicated;
+	return;
 }
 
 
